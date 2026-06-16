@@ -10,7 +10,8 @@ services:
     
     # Allows psutil to see the actual host machine's CPU and memory usage
     pid: "host"
-    network_mode: "host"
+    ports:
+      - "127.0.0.1:8080:8080"
 
     volumes:
       # CRITICAL: Allows the app to interact with the host's Docker daemon
