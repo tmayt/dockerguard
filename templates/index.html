@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Docker Guardian</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Vazirmatn:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg:       #080c14;
+    --surface:  #111827;
+    --surface-hover: #1f293d;
+    --border:   #1e2d45;
+    --accent:   #00d4aa;
+    --accent2:  #3b82f6;
+    --danger:   #ef4444;
+    --warn:     #f59e0b;
+    --ok:       #10b981;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --mono:     'IBM Plex Mono', monospace;
+    --sans:     'Vazirmatn', sans-serif;
+    --shadow:   0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(17, 24, 39, 0.8);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--shadow);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .logo-icon {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    font-size: 20px;
+    box-shadow: 0 0 15px rgba(0, 212, 170, 0.2);
+  }
+
+  .logo-text { font-size: 19px; font-weight: 700; letter-spacing: -0.3px; color: #fff; }
+  .logo-sub  { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+
+  .header-status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: rgba(255, 255, 255, 0.02);
+    padding: 6px 14px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+  }
+
+  .pulse {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 10px var(--ok);
+    animation: pulse 2s infinite;
+  }
+  .pulse.danger { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
+  .pulse.warn   { background: var(--warn);   box-shadow: 0 0 10px var(--warn);   }
+  .pulse.off    { background: var(--muted);  box-shadow: none; animation: none; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.3; transform: scale(0.9); }
+  }
+
+  /* ── Layout ── */
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px 32px; }
+
+  .grid-top {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-bottom: 24px;
+  }
+
+  .grid-main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .card:hover {
+    border-color: rgba(59, 130, 246, 0.3);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .card-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    margin-bottom: 16px;
+    font-weight: 600;
+    font-family: var(--mono);
+  }
+
+  /* ── Gauge cards ── */
+  .gauge-card { text-align: center; }
+
+  .gauge-val {
+    font-size: 44px;
+    font-weight: 700;
+    font-family: var(--mono);
+    line-height: 1;
+    margin-bottom: 6px;
+    transition: color 0.3s;
+  }
+
+  .gauge-label { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+
+  .bar-track {
+    height: 8px;
+    background: rgba(30, 45, 69, 0.5);
+    border-radius: 99px;
+    overflow: hidden;
+    padding: 1px;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 99px;
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s;
+    background: var(--ok);
+  }
+  .bar-fill.warn   { background: var(--warn); }
+  .bar-fill.danger { background: var(--danger); }
+
+  /* ── Info cards ── */
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(30, 45, 69, 0.5);
+    font-size: 13px;
+  }
+  .stat-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .stat-row:first-child { padding-top: 0; }
+  .stat-key { color: var(--muted); }
+  .stat-val { font-family: var(--mono); font-weight: 600; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: var(--sans);
+    font-weight: 600;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .btn:hover:not(:disabled)   { opacity: 0.9; transform: translateY(-1px); }
+  .btn:active:not(:disabled)  { transform: translateY(1px); }
+  .btn:disabled {
+    opacity: 0.4 !important;
+    cursor: not-allowed !important;
+    transform: none !important;
+  }
+  .btn-accent  { background: var(--accent);  color: #040811; box-shadow: 0 4px 12px rgba(0, 212, 170, 0.15); }
+  .btn-danger  { background: var(--danger);  color: #fff; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15); }
+  .btn-ok      { background: var(--ok);      color: #040811; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15); }
+  .btn-ghost   { background: var(--border);  color: var(--text); }
+  .btn-sm      { padding: 6px 12px; font-size: 12px; border-radius: 6px; }
+
+  /* ── Containers table ── */
+  .section-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .badge {
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 2px 8px;
+    border-radius: 99px;
+    background: var(--border);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+
+  th {
+    text-align: right;
+    padding: 12px;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    border-bottom: 2px solid var(--border);
+    font-weight: 600;
+  }
+
+  td {
+    padding: 14px 12px;
+    border-bottom: 1px solid rgba(30, 45, 69, 0.4);
+    vertical-align: middle;
+    transition: background-color 0.2s;
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.015); }
+
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-left: 8px;
+  }
+  .dot-running  { background: var(--ok);     box-shadow: 0 0 8px var(--ok); }
+  .dot-exited   { background: var(--muted); }
+  .dot-stopped  { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  .dot-paused   { background: var(--warn);   box-shadow: 0 0 8px var(--warn); }
+
+  /* Priority slider */
+  .priority-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 90px;
+    height: 6px;
+    border-radius: 99px;
+    background: var(--border);
+    outline: none;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  input[type=range]:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    box-shadow: 0 0 5px rgba(0,0,0,0.5);
+    transition: transform 0.1s;
+  }
+  input[type=range]:not(:disabled)::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+  }
+  .priority-num {
+    font-family: var(--mono);
+    font-size: 13px;
+    width: 16px;
+    text-align: center;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ── Right panel ── */
+  .right-panel { display: flex; flex-direction: column; gap: 20px; }
+
+  /* Thresholds */
+  .thresh-group { margin-bottom: 18px; }
+  .thresh-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .thresh-label span:last-child {
+    font-family: var(--mono);
+    color: var(--text);
+    font-weight: 600;
+  }
+  input[type=range].thresh { width: 100%; }
+
+  /* ── Log panel ── */
+  .log-box {
+    background: #05070f;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.8;
+    height: 280px;
+    overflow-y: auto;
+    color: #94a3b8;
+    box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+  }
+
+  .log-line { white-space: pre-wrap; word-break: break-all; margin-bottom: 4px; padding-left: 4px; border-left: 2px solid transparent;}
+  .log-line.warn    { color: var(--warn); border-left-color: var(--warn); }
+  .log-line.error   { color: var(--danger); border-left-color: var(--danger); }
+  .log-line.ok      { color: var(--ok); border-left-color: var(--ok); }
+  .log-line.info    { color: #64748b; }
+
+  /* ── Monitor toggle ── */
+  .monitor-btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  /* ── Suspended banner ── */
+  .suspended-banner {
+    background: rgba(239, 68, 68, 0.06);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 12px;
+    padding: 14px 20px;
+    font-size: 13px;
+    color: #fca5a5;
+    font-weight: 500;
+    display: none;
+    animation: fadeIn 0.3s ease;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.05);
+  }
+  .suspended-banner.visible { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* ── Empty state ── */
+  .empty { text-align: center; padding: 48px; color: var(--muted); font-size: 14px; }
+
+  .tag-suspended {
+    font-size: 10px;
+    font-family: var(--mono);
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+    font-weight: 600;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🛡️</div>
+    <div>
+      <div class="logo-text">Docker Guardian</div>
+      <div class="logo-sub">resource monitor & auto-scaler</div>
+    </div>
+  </div>
+  <div class="header-status">
+    <span id="hdr-text" style="font-size:13px;color:var(--muted)">در حال بارگذاری...</span>
+    <div class="pulse off" id="hdr-pulse"></div>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="grid-top">
+    <div class="card gauge-card">
+      <div class="card-title">CPU</div>
+      <div class="gauge-val" id="cpu-val" style="color:var(--ok)">—</div>
+      <div class="gauge-label">درصد استفاده</div>
+      <div class="bar-track"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card gauge-card">
+      <div class="card-title">RAM</div>
+      <div class="gauge-val" id="ram-val" style="color:var(--ok)">—</div>
+      <div class="gauge-label">درصد استفاده</div>
+      <div class="bar-track"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card gauge-card">
+      <div class="card-title">حافظه</div>
+      <div class="gauge-val" id="ram-gb" style="font-size:26px;color:var(--accent2)">— GB</div>
+      <div class="gauge-label" id="ram-total">از — GB</div>
+      <div class="bar-track"><div class="bar-fill" id="ram-gb-bar" style="width:0%;background:var(--accent2)"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">وضعیت کلی</div>
+      <div class="stat-row">
+        <span class="stat-key">Docker</span>
+        <span class="stat-val" id="docker-status">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">مانیتور</span>
+        <span class="stat-val" id="monitor-status">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">متوقف‌شده</span>
+        <span class="stat-val" id="suspended-cnt">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">کانتینرها</span>
+        <span class="stat-val" id="container-cnt">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="suspended-banner" id="suspended-banner">
+    ⚠️ منابع سرور اشباع شده — کانتینرهای کم‌اولویت متوقف شده‌اند
+  </div>
+
+  <div id="suspended-spacer" style="height:0"></div>
+
+  <div class="grid-main" style="margin-top:20px">
+
+    <div class="card">
+      <div class="section-title">
+        🐳 کانتینرهای Docker
+        <span class="badge" id="cnt-badge">0</span>
+      </div>
+      <div id="containers-wrap">
+        <div class="empty">در حال دریافت اطلاعات...</div>
+      </div>
+    </div>
+
+    <div class="right-panel">
+
+      <div class="card">
+        <div class="card-title">کنترل مانیتور</div>
+        <button class="btn monitor-btn btn-ok" id="toggle-btn" onclick="toggleMonitor()">
+          ⏸ توقف مانیتور
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">آستانه‌های هشدار</div>
+
+        <div class="thresh-group">
+          <div class="thresh-label">
+            <span>CPU حداکثر</span>
+            <span id="cpu-thresh-label">80%</span>
+          </div>
+          <input type="range" class="thresh" min="10" max="99" value="80" id="cpu-thresh" 
+                 oninput="document.getElementById('cpu-thresh-label').textContent=this.value+'%'">
+        </div>
+
+        <div class="thresh-group">
+          <div class="thresh-label">
+            <span>RAM حداکثر</span>
+            <span id="ram-thresh-label">80%</span>
+          </div>
+          <input type="range" class="thresh" min="10" max="99" value="80" id="ram-thresh" 
+                 oninput="document.getElementById('ram-thresh-label').textContent=this.value+'%'">
+        </div>
+
+        <div class="thresh-group">
+          <div class="thresh-label">
+            <span>بازه بررسی</span>
+            <span id="interval-label">10s</span>
+          </div>
+          <input type="range" class="thresh" min="3" max="120" value="10" id="interval-thresh" 
+                 oninput="document.getElementById('interval-label').textContent=this.value+'s'">
+        </div>
+
+        <button id="save-thresh-btn" class="btn btn-accent" style="width:100%;justify-content:center;margin-top:4px"
+                onclick="saveThresholds()">
+          💾 ذخیره تنظیمات
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="section-title">
+          📋 لاگ‌های سیستم
+          <button id="refresh-logs-btn" class="btn btn-ghost btn-sm" onclick="loadLogs()" style="margin-right:auto">
+            🔄 به‌روز
+          </button>
+        </div>
+        <div class="log-box" id="log-box">در حال بارگذاری...</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+let monitorRunning = true;
+let refreshInterval;
+
+// Helper to disable/enable buttons during API requests
+function setElementLoading(elementId, isLoading, loadingText = null) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.disabled = isLoading;
+  if (loadingText) {
+    if (isLoading) {
+      el.dataset.originalText = el.innerHTML;
+      el.innerHTML = loadingText;
+    } else if (el.dataset.originalText) {
+      el.innerHTML = el.dataset.originalText;
+    }
+  }
+}
+
+// Disable or enable all actions in the container table
+function setTableActionsLoading(isLoading) {
+  const elements = document.querySelectorAll('#containers-wrap button, #containers-wrap input[type=range]');
+  elements.forEach(el => el.disabled = isLoading);
+}
+
+// ── Fetch status ─────────────────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    updateDashboard(d);
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function colorFor(val, warn=70, danger=85) {
+  if (val >= danger) return 'var(--danger)';
+  if (val >= warn)   return 'var(--warn)';
+  return 'var(--ok)';
+}
+
+function classFor(val, warn=70, danger=85) {
+  if (val >= danger) return 'danger';
+  if (val >= warn)   return 'warn';
+  return '';
+}
+
+function updateDashboard(d) {
+  // Gauges
+  const cpu = d.cpu.toFixed(1);
+  const ram = d.ram.toFixed(1);
+
+  document.getElementById('cpu-val').textContent = cpu + '%';
+  document.getElementById('cpu-val').style.color = colorFor(d.cpu);
+  const cpuBar = document.getElementById('cpu-bar');
+  cpuBar.style.width = cpu + '%';
+  cpuBar.className = 'bar-fill ' + classFor(d.cpu);
+
+  document.getElementById('ram-val').textContent = ram + '%';
+  document.getElementById('ram-val').style.color = colorFor(d.ram);
+  const ramBar = document.getElementById('ram-bar');
+  ramBar.style.width = ram + '%';
+  ramBar.className = 'bar-fill ' + classFor(d.ram);
+
+  document.getElementById('ram-gb').textContent = d.ram_used_gb + ' GB';
+  document.getElementById('ram-total').textContent = 'از ' + d.ram_total_gb + ' GB';
+  document.getElementById('ram-gb-bar').style.width = ram + '%';
+
+  // Stats
+  document.getElementById('docker-status').textContent = d.docker_available ? '✅ متصل' : '⚠️ Demo';
+  document.getElementById('docker-status').style.color = d.docker_available ? 'var(--ok)' : 'var(--warn)';
+  document.getElementById('monitor-status').textContent = d.monitor_running ? '▶️ فعال' : '⏸ متوقف';
+  document.getElementById('suspended-cnt').textContent = d.suspended_count;
+  document.getElementById('container-cnt').textContent = d.containers.length;
+
+  monitorRunning = d.monitor_running;
+  
+  const toggleBtn = document.getElementById('toggle-btn');
+  // Only change text if button is not currently processing/disabled
+  if (!toggleBtn.disabled) {
+    toggleBtn.textContent = monitorRunning ? '⏸ توقف مانیتور' : '▶️ شروع مانیتور';
+    toggleBtn.className = 'btn monitor-btn ' + (monitorRunning ? 'btn-danger' : 'btn-ok');
+  }
+
+  // Header pulse
+  const pulse = document.getElementById('hdr-pulse');
+  const hdrText = document.getElementById('hdr-text');
+  pulse.className = 'pulse ' + (d.overloaded ? 'danger' : (d.monitor_running ? '' : 'off'));
+  hdrText.textContent = d.overloaded
+    ? '⚠️ منابع اشباع'
+    : (d.monitor_running ? '✅ وضعیت نرمال' : '⏸ مانیتور متوقف');
+  hdrText.style.color = d.overloaded ? 'var(--danger)' : (d.monitor_running ? 'var(--ok)' : 'var(--muted)');
+
+  // Suspended banner
+  const banner = document.getElementById('suspended-banner');
+  if (d.overloaded || d.suspended_count > 0) {
+    banner.classList.add('visible');
+    document.getElementById('suspended-spacer').style.height = '16px';
+  } else {
+    banner.classList.remove('visible');
+    document.getElementById('suspended-spacer').style.height = '0';
+  }
+
+  // Thresholds sync (only on first load)
+  if (!window._threshLoaded) {
+    window._threshLoaded = true;
+    const t = d.thresholds;
+    document.getElementById('cpu-thresh').value = t.cpu;
+    document.getElementById('cpu-thresh-label').textContent = t.cpu + '%';
+    document.getElementById('ram-thresh').value = t.ram;
+    document.getElementById('ram-thresh-label').textContent = t.ram + '%';
+    document.getElementById('interval-thresh').value = t.interval;
+    document.getElementById('interval-label').textContent = t.interval + 's';
+  }
+
+  // Containers table
+  document.getElementById('cnt-badge').textContent = d.containers.length;
+  renderContainers(d.containers);
+}
+
+function renderContainers(list) {
+  const wrap = document.getElementById('containers-wrap');
+  if (!list.length) {
+    wrap.innerHTML = '<div class="empty">هیچ کانتینری یافت نشد</div>';
+    return;
+  }
+
+  const rows = list.map(c => {
+    const dotClass = {running:'dot-running', exited:'dot-exited', stopped:'dot-stopped', paused:'dot-paused'}[c.status] || 'dot-exited';
+    const suspended = c.suspended_by_guardian;
+    const nameCell = `
+      <div style="display:flex; align-items:center;">
+        ${suspended ? '<span class="tag-suspended">guardian</span>' : ''}
+        <div>
+          <strong>${c.name}</strong>
+          <br><span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${c.image}</span>
+        </div>
+      </div>
+    `;
+    const statusCell = `<span class="status-dot ${dotClass}"></span> ${c.status}`;
+    const prioCell = `
+      <div class="priority-wrap">
+        <input type="range" min="1" max="10" value="${c.priority}"
+               style="width:80px"
+               oninput="this.nextElementSibling.textContent=this.value"
+               onchange="setPriority('${c.name}', this.value)">
+        <span class="priority-num">${c.priority}</span>
+      </div>`;
+    const actCell = c.status === 'running'
+      ? `<button class="btn btn-danger btn-sm" onclick="containerAction(this, '${c.name}','stop')">⏹ توقف</button>`
+      : `<button class="btn btn-ok btn-sm" onclick="containerAction(this, '${c.name}','start')">▶️ شروع</button>`;
+    return `<tr><td>${nameCell}</td><td>${statusCell}</td><td>${prioCell}</td><td>${actCell}</td></tr>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>نام / تصویر</th>
+        <th>وضعیت</th>
+        <th>اولویت (۱=پایین)</th>
+        <th>عملیات</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+async function setPriority(name, val) {
+  setTableActionsLoading(true);
+  try {
+    await fetch('/api/priority', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({container_name: name, priority: parseInt(val)})
+    });
+  } catch(e) {
+    console.error(e);
+  } finally {
+    setTableActionsLoading(false);
+  }
+}
+
+async function containerAction(btnElement, name, action) {
+  setTableActionsLoading(true);
+  const originalText = btnElement.innerHTML;
+  btnElement.innerHTML = '⏳ ...';
+  
+  try {
+    await fetch(`/api/container/${name}/${action}`, {method:'POST'});
+    await fetchStatus();
+  } catch(e) {
+    console.error(e);
+    btnElement.innerHTML = originalText;
+    setTableActionsLoading(false);
+  }
+}
+
+async function toggleMonitor() {
+  setElementLoading('toggle-btn', true, '⏳ در حال تغییر...');
+  try {
+    const r = await fetch('/api/monitor/toggle');
+    const d = await r.json();
+    monitorRunning = d.running;
+    await fetchStatus();
+  } catch(e) {
+    console.error(e);
+  } finally {
+    setElementLoading('toggle-btn', false);
+  }
+}
+
+async function saveThresholds() {
+  setElementLoading('save-thresh-btn', true, '⏳ در حال ذخیره...');
+  const cpu      = parseFloat(document.getElementById('cpu-thresh').value);
+  const ram      = parseFloat(document.getElementById('ram-thresh').value);
+  const interval = parseInt(document.getElementById('interval-thresh').value);
+  
+  try {
+    await fetch('/api/thresholds', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({cpu, ram, interval})
+    });
+    window._threshLoaded = false; // allow re-sync
+    await fetchStatus();
+  } catch(e) {
+    console.error(e);
+  } finally {
+    setElementLoading('save-thresh-btn', false);
+  }
+}
+
+// ── Logs ─────────────────────────────────────────────────────────────────────
+function logClass(line) {
+  if (/ERROR|error/.test(line)) return 'error';
+  if (/WARNING|warn|WARN|⚠️|🔴/.test(line)) return 'warn';
+  if (/✅|▶️|🟢|INFO.*OK/.test(line)) return 'ok';
+  return 'info';
+}
+
+async function loadLogs() {
+  setElementLoading('refresh-logs-btn', true, '🔄 ...');
+  try {
+    const r = await fetch('/api/logs?lines=80');
+    const d = await r.json();
+    const box = document.getElementById('log-box');
+    box.innerHTML = d.lines.map(l =>
+      `<div class="log-line ${logClass(l)}">${l.replace(/</g,'&lt;')}</div>`
+    ).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch(e) {
+    console.error(e);
+  } finally {
+    setElementLoading('refresh-logs-btn', false);
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+fetchStatus();
+loadLogs();
+refreshInterval = setInterval(fetchStatus, 5000);
+setInterval(loadLogs, 15000);
+</script>
+</body>
+</html>
