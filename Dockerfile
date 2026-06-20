@@ -4,6 +4,9 @@ WORKDIR /app
 
 # Install dependencies
 COPY requirements.txt .
+
+RUN apt-get update && apt-get install -y curl
+
 RUN pip install --no-cache-dir -r requirements.txt --index-url https://mirror2.chabokan.net/pypi/simple/ --trusted-host mirror2.chabokan.net
 
 # Copy source

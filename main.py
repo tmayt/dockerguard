@@ -18,6 +18,10 @@ from database import (
     ContainerConfig,
     Settings,
 )
+import os
+
+curl_start = os.getenv("START_NOTIFICATION_CURL", "")
+curl_stop = os.getenv("STOP_NOTIFICATION_CURL", "")
 
 
 def load_state():
