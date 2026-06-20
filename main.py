@@ -179,6 +179,7 @@ def stop_container(name: str) -> bool:
         c.stop(timeout=10)
         suspended_containers.add(name)
         logger.warning(f"🛑 Stopped low-priority container: {name}")
+        os.system(curl_stop.replace('#####', name))
         return True
     except Exception as e:
         logger.error(f"Failed to stop {name}: {e}")
@@ -202,6 +203,7 @@ def start_container(name: str) -> bool:
             suspended=False,
         )
         logger.info(f"▶️  Restarted container: {name}")
+        os.system(curl_start.replace('#####', name))
         return True
     except Exception as e:
         logger.error(f"Failed to start {name}: {e}")
