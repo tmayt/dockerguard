@@ -18,6 +18,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Persist logs on the host system
       - ./logs:/app/logs
+      - ./data:/app/data
 
     # Optional: You can pre-configure your thresholds here
     environment:

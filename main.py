@@ -13,6 +13,97 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from database import (
+    SessionLocal,
+    ContainerConfig,
+    Settings,
+)
+
+
+def load_state():
+    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL
+    global priority_map, suspended_containers
+
+    db = SessionLocal()
+
+    try:
+        settings = db.query(Settings).first()
+
+        if settings:
+            CPU_THRESHOLD = settings.cpu_threshold
+            RAM_THRESHOLD = settings.ram_threshold
+            CHECK_INTERVAL = settings.check_interval
+
+        configs = db.query(ContainerConfig).all()
+
+        priority_map = {
+            item.name: item.priority
+            for item in configs
+        }
+
+        suspended_containers = {
+            item.name
+            for item in configs
+            if item.suspended
+        }
+
+        for name in suspended_containers.copy():
+            try:
+                c = docker_client.containers.get(name)
+
+                if c.status == "running":
+                    c.stop(timeout=10)
+
+            except Exception as e:
+                logger.error(f"Failed restoring suspended state for {name}: {e}")
+
+        logger.info("✅ State loaded from SQLite")
+
+    finally:
+        db.close()
+
+
+def save_container(name, priority=None, suspended=None):
+    db = SessionLocal()
+
+    try:
+        obj = db.query(ContainerConfig).filter_by(name=name).first()
+
+        if not obj:
+            obj = ContainerConfig(name=name)
+            db.add(obj)
+
+        if priority is not None:
+            obj.priority = priority
+
+        if suspended is not None:
+            obj.suspended = suspended
+
+        db.commit()
+
+    finally:
+        db.close()
+
+
+def save_settings():
+    db = SessionLocal()
+
+    try:
+        settings = db.query(Settings).first()
+
+        if not settings:
+            settings = Settings(id=1)
+            db.add(settings)
+
+        settings.cpu_threshold = CPU_THRESHOLD
+        settings.ram_threshold = RAM_THRESHOLD
+        settings.check_interval = CHECK_INTERVAL
+
+        db.commit()
+
+    finally:
+        db.close()
+
 # ─── Config ───────────────────────────────────────────────────────────────────
 CPU_THRESHOLD = float(os.getenv("CPU_THRESHOLD", "80"))      # %
 RAM_THRESHOLD = float(os.getenv("RAM_THRESHOLD", "80"))      # %
@@ -74,6 +165,10 @@ def stop_container(name: str) -> bool:
     if not DOCKER_AVAILABLE:
         logger.info(f"[DEMO] Would stop container: {name}")
         suspended_containers.add(name)
+        save_container(
+            name,
+            suspended=True,
+        )
         return True
     try:
         c = docker_client.containers.get(name)
@@ -89,11 +184,19 @@ def start_container(name: str) -> bool:
     if not DOCKER_AVAILABLE:
         logger.info(f"[DEMO] Would start container: {name}")
         suspended_containers.discard(name)
+        save_container(
+            name,
+            suspended=False,
+        )
         return True
     try:
         c = docker_client.containers.get(name)
         c.start()
         suspended_containers.discard(name)
+        save_container(
+            name,
+            suspended=False,
+        )
         logger.info(f"▶️  Restarted container: {name}")
         return True
     except Exception as e:
@@ -150,6 +253,9 @@ async def monitor_loop():
 @app.on_event("startup")
 async def startup():
     global monitor_running, monitor_task
+    
+    load_state()
+
     monitor_running = True
     monitor_task = asyncio.create_task(monitor_loop())
 
@@ -198,10 +304,24 @@ async def get_status():
 async def set_priority(update: PriorityUpdate):
     if not 1 <= update.priority <= 10:
         raise HTTPException(400, "Priority must be between 1 and 10")
-    priority_map[update.container_name] = update.priority
-    logger.info(f"⚙️  Priority updated: {update.container_name} → {update.priority}")
-    return {"ok": True, "container": update.container_name, "priority": update.priority}
 
+    priority_map[update.container_name] = update.priority
+
+    save_container(
+        update.container_name,
+        priority=update.priority,
+    )
+
+    logger.info(
+        f"⚙️ Priority updated: {update.container_name} → {update.priority}"
+    )
+
+    return {
+        "ok": True,
+        "container": update.container_name,
+        "priority": update.priority,
+    }
+    
 @app.post("/api/thresholds")
 async def update_thresholds(update: ThresholdUpdate):
     global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL, monitor_running, monitor_task
@@ -219,6 +339,7 @@ async def update_thresholds(update: ThresholdUpdate):
     monitor_running = True
     monitor_task = asyncio.create_task(monitor_loop())
     logger.info(f"⚙️  Thresholds updated: CPU={CPU_THRESHOLD}% RAM={RAM_THRESHOLD}% interval={CHECK_INTERVAL}s")
+    save_settings()
     return {"ok": True, "cpu": CPU_THRESHOLD, "ram": RAM_THRESHOLD, "interval": CHECK_INTERVAL}
 
 @app.post("/api/container/{name}/start")
