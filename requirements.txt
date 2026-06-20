@@ -3,3 +3,4 @@ uvicorn
 docker
 psutil
 pydantic
+sqlalchemy
