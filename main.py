@@ -208,7 +208,7 @@ async def monitor_loop():
     global monitor_running
     logger.info(f"🚀 Monitor started — CPU>{CPU_THRESHOLD}% | RAM>{RAM_THRESHOLD}% | every {CHECK_INTERVAL}s")
     while monitor_running:
-        cpu = psutil.cpu_percent(interval=1)
+        cpu = psutil.cpu_percent(interval=5)
         ram = psutil.virtual_memory().percent
         overloaded = cpu > CPU_THRESHOLD or ram > RAM_THRESHOLD
 
