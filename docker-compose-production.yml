@@ -1,0 +1,27 @@
+
+services:
+  docker-guardian:
+    image: gitea.tmayt.ir/thaiostream/docker-guardian:latest
+    container_name: docker-guardian
+    restart: unless-stopped
+    
+    # Allows psutil to see the actual host machine's CPU and memory usage
+    pid: "host"
+    ports:
+      - "127.0.0.1:8080:8080"
+      
+    volumes:
+      # CRITICAL: Allows the app to interact with the host's Docker daemon
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Optional: Persist logs on the host system
+      - ./logs:/app/logs
+      - ./data:/app/data
+
+    # Optional: You can pre-configure your thresholds here
+    environment:
+      - CPU_THRESHOLD=80
+      - RAM_THRESHOLD=80
+      - CHECK_INTERVAL=60
+      - LOG_FILE=logs/guardian.log
+      - START_NOTIFICATION_CURL=${START_NOTIFICATION_CURL}
+      - STOP_NOTIFICATION_CURL=${STOP_NOTIFICATION_CURL}
