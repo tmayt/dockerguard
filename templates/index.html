@@ -616,11 +616,21 @@ function updateDashboard(d) {
   // Header pulse
   const pulse = document.getElementById('hdr-pulse');
   const hdrText = document.getElementById('hdr-text');
-  pulse.className = 'pulse ' + (d.overloaded ? 'danger' : (d.monitor_running ? '' : 'off'));
-  hdrText.textContent = d.overloaded
-    ? '⚠️ منابع اشباع'
-    : (d.monitor_running ? '✅ وضعیت نرمال' : '⏸ مانیتور متوقف');
-  hdrText.style.color = d.overloaded ? 'var(--danger)' : (d.monitor_running ? 'var(--ok)' : 'var(--muted)');
+  pulse.className = 'pulse ' + (
+    d.overloaded ? 'danger'
+    : (d.cpu_high_streak > 0 ? 'warn'
+    : (d.monitor_running ? '' : 'off'))
+  );
+  if (d.overloaded) {
+    hdrText.textContent = '⚠️ منابع اشباع';
+    hdrText.style.color = 'var(--danger)';
+  } else if (d.cpu_high_streak > 0) {
+    hdrText.textContent = `⚠️ CPU بالا ${d.cpu_high_streak}/${d.cpu_high_streak_required} بازه`;
+    hdrText.style.color = 'var(--warn)';
+  } else {
+    hdrText.textContent = d.monitor_running ? '✅ وضعیت نرمال' : '⏸ مانیتور متوقف';
+    hdrText.style.color = d.monitor_running ? 'var(--ok)' : 'var(--muted)';
+  }
 
   // Suspended banner
   const banner = document.getElementById('suspended-banner');

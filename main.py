@@ -112,6 +112,7 @@ def save_settings():
 CPU_THRESHOLD = float(os.getenv("CPU_THRESHOLD", "80"))      # %
 RAM_THRESHOLD = float(os.getenv("RAM_THRESHOLD", "80"))      # %
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))      # seconds
+CPU_HIGH_STREAK_REQUIRED = int(os.getenv("CPU_HIGH_STREAK", "3"))
 LOG_FILE = Path(os.getenv("LOG_FILE", "logs/guardian.log"))
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -144,6 +145,8 @@ priority_map: dict[str, int] = {}
 suspended_containers: set[str] = set()
 monitor_running = False
 monitor_task: Optional[asyncio.Task] = None
+cpu_high_streak = 0
+resource_saturated = False
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 class PriorityUpdate(BaseModel):
@@ -211,14 +214,34 @@ def start_container(name: str) -> bool:
 
 # ─── Monitor loop ─────────────────────────────────────────────────────────────
 async def monitor_loop():
-    global monitor_running
-    logger.info(f"🚀 Monitor started — CPU>{CPU_THRESHOLD}% | RAM>{RAM_THRESHOLD}% | every {CHECK_INTERVAL}s")
+    global monitor_running, cpu_high_streak, resource_saturated
+    cpu_high_streak = 0
+    resource_saturated = False
+    logger.info(
+        f"🚀 Monitor started — CPU>{CPU_THRESHOLD}% for {CPU_HIGH_STREAK_REQUIRED} intervals "
+        f"| RAM>{RAM_THRESHOLD}% | every {CHECK_INTERVAL}s"
+    )
     while monitor_running:
         cpu = psutil.cpu_percent(interval=5)
         ram = psutil.virtual_memory().percent
-        overloaded = cpu > CPU_THRESHOLD or ram > RAM_THRESHOLD
 
-        logger.info(f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% {'⚠️ OVERLOADED' if overloaded else '✅ OK'}")
+        if cpu > CPU_THRESHOLD:
+            cpu_high_streak += 1
+        else:
+            cpu_high_streak = 0
+
+        cpu_saturated = cpu_high_streak >= CPU_HIGH_STREAK_REQUIRED
+        ram_saturated = ram > RAM_THRESHOLD
+        overloaded = cpu_saturated or ram_saturated
+        resource_saturated = overloaded
+
+        if cpu > CPU_THRESHOLD and not cpu_saturated:
+            logger.info(
+                f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% "
+                f"⏳ CPU high {cpu_high_streak}/{CPU_HIGH_STREAK_REQUIRED} consecutive intervals"
+            )
+        else:
+            logger.info(f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% {'⚠️ OVERLOADED' if overloaded else '✅ OK'}")
 
         containers = get_containers()
 
@@ -298,7 +321,9 @@ async def get_status():
         "ram": mem.percent,
         "ram_used_gb": round(mem.used / 1e9, 2),
         "ram_total_gb": round(mem.total / 1e9, 2),
-        "overloaded": cpu > CPU_THRESHOLD or mem.percent > RAM_THRESHOLD,
+        "overloaded": resource_saturated,
+        "cpu_high_streak": cpu_high_streak,
+        "cpu_high_streak_required": CPU_HIGH_STREAK_REQUIRED,
         "thresholds": {"cpu": CPU_THRESHOLD, "ram": RAM_THRESHOLD, "interval": CHECK_INTERVAL},
         "monitor_running": monitor_running,
         "docker_available": DOCKER_AVAILABLE,
