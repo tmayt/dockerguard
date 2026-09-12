@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Docker Guardian</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Vazirmatn:wght@300;400;500;600;700&display=swap');
-
   :root {
     --bg:       #080c14;
     --surface:  #111827;
@@ -19,8 +17,8 @@
     --ok:       #10b981;
     --text:     #e2e8f0;
     --muted:    #64748b;
-    --mono:     'IBM Plex Mono', monospace;
-    --sans:     'Vazirmatn', sans-serif;
+    --mono:     ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans:     Tahoma, system-ui, sans-serif;
     --shadow:   0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
   }
@@ -42,8 +40,7 @@
     justify-content: space-between;
     padding: 16px 32px;
     border-bottom: 1px solid var(--border);
-    background: rgba(17, 24, 39, 0.8);
-    backdrop-filter: blur(12px);
+    background: rgba(17, 24, 39, 0.92);
     position: sticky;
     top: 0;
     z-index: 100;
@@ -260,13 +257,41 @@
   .dot-running  { background: var(--ok);     box-shadow: 0 0 8px var(--ok); }
   .dot-exited   { background: var(--muted); }
   .dot-stopped  { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
-  .dot-paused   { background: var(--warn);   box-shadow: 0 0 8px var(--warn); }
+  .use-cell {
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: nowrap;
+    direction: ltr;
+    text-align: left;
+  }
+  .use-cpu { font-weight: 600; }
+  .use-ram { color: var(--muted); margin-top: 2px; }
 
-  /* Priority slider */
   .priority-wrap {
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+
+  .priority-input {
+    width: 64px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0b1220;
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    outline: none;
+  }
+  .priority-input:focus {
+    border-color: var(--accent);
+  }
+  .priority-input:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
   }
 
   input[type=range] {
@@ -294,14 +319,6 @@
   }
   input[type=range]:not(:disabled)::-webkit-slider-thumb:hover {
     transform: scale(1.2);
-  }
-  .priority-num {
-    font-family: var(--mono);
-    font-size: 13px;
-    width: 16px;
-    text-align: center;
-    color: var(--accent);
-    font-weight: 600;
   }
 
   /* ── Right panel ── */
@@ -517,7 +534,7 @@
       <div class="card">
         <div class="section-title">
           📋 لاگ‌های سیستم
-          <button id="refresh-logs-btn" class="btn btn-ghost btn-sm" onclick="loadLogs()" style="margin-right:auto">
+          <button id="refresh-logs-btn" class="btn btn-ghost btn-sm" onclick="loadLogs(true)" style="margin-right:auto">
             🔄 به‌روز
           </button>
         </div>
@@ -530,36 +547,43 @@
 
 <script>
 let monitorRunning = true;
-let refreshInterval;
+let eventSource = null;
+let pollTimer = null;
+let containersFingerprint = '';
+let lastUsage = {};
 
-// Helper to disable/enable buttons during API requests
 function setElementLoading(elementId, isLoading, loadingText = null) {
   const el = document.getElementById(elementId);
   if (!el) return;
-  el.disabled = isLoading;
   if (loadingText) {
     if (isLoading) {
-      el.dataset.originalText = el.innerHTML;
+      if (!el.dataset.originalText) el.dataset.originalText = el.innerHTML;
       el.innerHTML = loadingText;
     } else if (el.dataset.originalText) {
       el.innerHTML = el.dataset.originalText;
+      delete el.dataset.originalText;
     }
   }
+  el.disabled = isLoading;
 }
 
-// Disable or enable all actions in the container table
 function setTableActionsLoading(isLoading) {
-  const elements = document.querySelectorAll('#containers-wrap button, #containers-wrap input[type=range]');
+  const elements = document.querySelectorAll('#containers-wrap button, #containers-wrap input.priority-input');
   elements.forEach(el => el.disabled = isLoading);
 }
 
-// ── Fetch status ─────────────────────────────────────────────────────────────
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
 async function fetchStatus() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
     updateDashboard(d);
-  } catch(e) {
+  } catch (e) {
     console.error(e);
   }
 }
@@ -576,10 +600,9 @@ function classFor(val, warn=70, danger=85) {
   return '';
 }
 
-function updateDashboard(d) {
-  // Gauges
-  const cpu = d.cpu.toFixed(1);
-  const ram = d.ram.toFixed(1);
+function applyMetrics(d) {
+  const cpu = Number(d.cpu || 0).toFixed(1);
+  const ram = Number(d.ram || 0).toFixed(1);
 
   document.getElementById('cpu-val').textContent = cpu + '%';
   document.getElementById('cpu-val').style.color = colorFor(d.cpu);
@@ -593,27 +616,20 @@ function updateDashboard(d) {
   ramBar.style.width = ram + '%';
   ramBar.className = 'bar-fill ' + classFor(d.ram);
 
-  document.getElementById('ram-gb').textContent = d.ram_used_gb + ' GB';
-  document.getElementById('ram-total').textContent = 'از ' + d.ram_total_gb + ' GB';
+  if (d.ram_used_gb != null) document.getElementById('ram-gb').textContent = d.ram_used_gb + ' GB';
+  if (d.ram_total_gb != null) document.getElementById('ram-total').textContent = 'از ' + d.ram_total_gb + ' GB';
   document.getElementById('ram-gb-bar').style.width = ram + '%';
 
-  // Stats
-  document.getElementById('docker-status').textContent = d.docker_available ? '✅ متصل' : '⚠️ Demo';
-  document.getElementById('docker-status').style.color = d.docker_available ? 'var(--ok)' : 'var(--warn)';
-  document.getElementById('monitor-status').textContent = d.monitor_running ? '▶️ فعال' : '⏸ متوقف';
-  document.getElementById('suspended-cnt').textContent = d.suspended_count;
-  document.getElementById('container-cnt').textContent = d.containers.length;
-
-  monitorRunning = d.monitor_running;
-  
-  const toggleBtn = document.getElementById('toggle-btn');
-  // Only change text if button is not currently processing/disabled
-  if (!toggleBtn.disabled) {
-    toggleBtn.textContent = monitorRunning ? '⏸ توقف مانیتور' : '▶️ شروع مانیتور';
-    toggleBtn.className = 'btn monitor-btn ' + (monitorRunning ? 'btn-danger' : 'btn-ok');
+  if (d.monitor_running != null) {
+    document.getElementById('monitor-status').textContent = d.monitor_running ? '▶️ فعال' : '⏸ متوقف';
+    monitorRunning = d.monitor_running;
+    const toggleBtn = document.getElementById('toggle-btn');
+    if (!toggleBtn.disabled) {
+      toggleBtn.textContent = monitorRunning ? '⏸ توقف مانیتور' : '▶️ شروع مانیتور';
+      toggleBtn.className = 'btn monitor-btn ' + (monitorRunning ? 'btn-danger' : 'btn-ok');
+    }
   }
 
-  // Header pulse
   const pulse = document.getElementById('hdr-pulse');
   const hdrText = document.getElementById('hdr-text');
   pulse.className = 'pulse ' + (
@@ -632,7 +648,22 @@ function updateDashboard(d) {
     hdrText.style.color = d.monitor_running ? 'var(--ok)' : 'var(--muted)';
   }
 
-  // Suspended banner
+  if (d.usage) {
+    lastUsage = d.usage;
+    updateUsage(d.usage);
+  }
+}
+
+function updateDashboard(d) {
+  applyMetrics(d);
+
+  if (d.docker_available != null) {
+    document.getElementById('docker-status').textContent = d.docker_available ? '✅ متصل' : '⚠️ Demo';
+    document.getElementById('docker-status').style.color = d.docker_available ? 'var(--ok)' : 'var(--warn)';
+  }
+  if (d.suspended_count != null) document.getElementById('suspended-cnt').textContent = d.suspended_count;
+  if (d.containers) document.getElementById('container-cnt').textContent = d.containers.length;
+
   const banner = document.getElementById('suspended-banner');
   if (d.overloaded || d.suspended_count > 0) {
     banner.classList.add('visible');
@@ -642,8 +673,7 @@ function updateDashboard(d) {
     document.getElementById('suspended-spacer').style.height = '0';
   }
 
-  // Thresholds sync (only on first load)
-  if (!window._threshLoaded) {
+  if (d.thresholds && !window._threshLoaded) {
     window._threshLoaded = true;
     const t = d.thresholds;
     document.getElementById('cpu-thresh').value = t.cpu;
@@ -654,13 +684,55 @@ function updateDashboard(d) {
     document.getElementById('interval-label').textContent = t.interval + 's';
   }
 
-  // Containers table
-  document.getElementById('cnt-badge').textContent = d.containers.length;
-  renderContainers(d.containers);
+  if (d.containers) {
+    document.getElementById('cnt-badge').textContent = d.containers.length;
+    lastUsage = Object.fromEntries(d.containers.map(c => [c.name, {cpu: c.cpu, ram_mb: c.ram_mb}]));
+    renderContainers(d.containers);
+    updateUsage(lastUsage);
+  }
+  if (d.logs) renderLogLines(d.logs);
+}
+
+function formatCpu(cpu) {
+  if (cpu == null || Number.isNaN(Number(cpu))) return '—';
+  return Number(cpu).toFixed(1) + '%';
+}
+
+function formatRam(mb) {
+  if (mb == null || Number.isNaN(Number(mb))) return '—';
+  const n = Number(mb);
+  if (n >= 1024) return (n / 1024).toFixed(2) + ' GB';
+  return (n >= 10 ? n.toFixed(0) : n.toFixed(1)) + ' MB';
+}
+
+function updateUsage(usage) {
+  if (!usage) return;
+  document.querySelectorAll('#containers-wrap tr[data-name]').forEach(tr => {
+    const u = usage[tr.dataset.name] || {};
+    const cpuEl = tr.querySelector('.use-cpu');
+    const ramEl = tr.querySelector('.use-ram');
+    if (!cpuEl || !ramEl) return;
+    cpuEl.textContent = formatCpu(u.cpu);
+    ramEl.textContent = formatRam(u.ram_mb);
+    cpuEl.style.color = (u.cpu == null) ? 'var(--muted)' : colorFor(Number(u.cpu), 50, 80);
+  });
 }
 
 function renderContainers(list) {
   const wrap = document.getElementById('containers-wrap');
+  if (document.activeElement && document.activeElement.classList.contains('priority-input')) {
+    updateUsage(lastUsage);
+    return;
+  }
+  const fp = list.map(c =>
+    [c.name, c.status, Number(c.priority), c.suspended_by_guardian ? 1 : 0, c.image].join('|')
+  ).join(';');
+  if (fp === containersFingerprint) {
+    updateUsage(lastUsage);
+    return;
+  }
+  containersFingerprint = fp;
+
   if (!list.length) {
     wrap.innerHTML = '<div class="empty">هیچ کانتینری یافت نشد</div>';
     return;
@@ -668,29 +740,33 @@ function renderContainers(list) {
 
   const rows = list.map(c => {
     const dotClass = {running:'dot-running', exited:'dot-exited', stopped:'dot-stopped', paused:'dot-paused'}[c.status] || 'dot-exited';
-    const suspended = c.suspended_by_guardian;
+    const name = escapeHtml(c.name);
+    const image = escapeHtml(c.image);
+    const priority = Number.parseInt(c.priority, 10) || 5;
     const nameCell = `
       <div style="display:flex; align-items:center;">
-        ${suspended ? '<span class="tag-suspended">guardian</span>' : ''}
+        ${c.suspended_by_guardian ? '<span class="tag-suspended">guardian</span>' : ''}
         <div>
-          <strong>${c.name}</strong>
-          <br><span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${c.image}</span>
+          <strong>${name}</strong>
+          <br><span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${image}</span>
         </div>
       </div>
     `;
-    const statusCell = `<span class="status-dot ${dotClass}"></span> ${c.status}`;
+    const statusCell = `<span class="status-dot ${dotClass}"></span> ${escapeHtml(c.status)}`;
+    const useCell = `
+      <div class="use-cell">
+        <div class="use-cpu">${formatCpu(c.cpu)}</div>
+        <div class="use-ram">${formatRam(c.ram_mb)}</div>
+      </div>`;
     const prioCell = `
       <div class="priority-wrap">
-        <input type="range" min="1" max="10" value="${c.priority}"
-               style="width:80px"
-               oninput="this.nextElementSibling.textContent=this.value"
-               onchange="setPriority('${c.name}', this.value)">
-        <span class="priority-num">${c.priority}</span>
+        <input class="priority-input" type="number" min="1" max="10" step="1" inputmode="numeric"
+               value="${priority}" data-name="${name}">
       </div>`;
     const actCell = c.status === 'running'
-      ? `<button class="btn btn-danger btn-sm" onclick="containerAction(this, '${c.name}','stop')">⏹ توقف</button>`
-      : `<button class="btn btn-ok btn-sm" onclick="containerAction(this, '${c.name}','start')">▶️ شروع</button>`;
-    return `<tr><td>${nameCell}</td><td>${statusCell}</td><td>${prioCell}</td><td>${actCell}</td></tr>`;
+      ? `<button class="btn btn-danger btn-sm" data-action="stop" data-name="${name}">⏹ توقف</button>`
+      : `<button class="btn btn-ok btn-sm" data-action="start" data-name="${name}">▶️ شروع</button>`;
+    return `<tr data-name="${name}"><td>${nameCell}</td><td>${statusCell}</td><td>${useCell}</td><td>${prioCell}</td><td>${actCell}</td></tr>`;
   }).join('');
 
   wrap.innerHTML = `
@@ -698,6 +774,7 @@ function renderContainers(list) {
       <thead><tr>
         <th>نام / تصویر</th>
         <th>وضعیت</th>
+        <th>مصرف لحظه‌ای</th>
         <th>اولویت (۱=پایین)</th>
         <th>عملیات</th>
       </tr></thead>
@@ -705,19 +782,34 @@ function renderContainers(list) {
     </table>`;
 }
 
-// ── API calls ─────────────────────────────────────────────────────────────────
-async function setPriority(name, val) {
-  setTableActionsLoading(true);
+document.getElementById('containers-wrap').addEventListener('change', (e) => {
+  if (e.target.classList.contains('priority-input')) {
+    setPriority(e.target.dataset.name, e.target.value, e.target);
+  }
+});
+
+document.getElementById('containers-wrap').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (btn) containerAction(btn, btn.dataset.name, btn.dataset.action);
+});
+
+async function setPriority(name, val, inputEl) {
+  const priority = Number.parseInt(val, 10);
+  if (!Number.isInteger(priority) || priority < 1 || priority > 10) {
+    if (inputEl) inputEl.value = 5;
+    return;
+  }
+  if (inputEl) inputEl.disabled = true;
   try {
     await fetch('/api/priority', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({container_name: name, priority: parseInt(val)})
+      body: JSON.stringify({container_name: name, priority})
     });
-  } catch(e) {
+  } catch (e) {
     console.error(e);
   } finally {
-    setTableActionsLoading(false);
+    if (inputEl) inputEl.disabled = false;
   }
 }
 
@@ -725,13 +817,12 @@ async function containerAction(btnElement, name, action) {
   setTableActionsLoading(true);
   const originalText = btnElement.innerHTML;
   btnElement.innerHTML = '⏳ ...';
-  
   try {
-    await fetch(`/api/container/${name}/${action}`, {method:'POST'});
-    await fetchStatus();
-  } catch(e) {
+    await fetch(`/api/container/${encodeURIComponent(name)}/${action}`, {method:'POST'});
+  } catch (e) {
     console.error(e);
     btnElement.innerHTML = originalText;
+  } finally {
     setTableActionsLoading(false);
   }
 }
@@ -742,8 +833,7 @@ async function toggleMonitor() {
     const r = await fetch('/api/monitor/toggle');
     const d = await r.json();
     monitorRunning = d.running;
-    await fetchStatus();
-  } catch(e) {
+  } catch (e) {
     console.error(e);
   } finally {
     setElementLoading('toggle-btn', false);
@@ -752,26 +842,23 @@ async function toggleMonitor() {
 
 async function saveThresholds() {
   setElementLoading('save-thresh-btn', true, '⏳ در حال ذخیره...');
-  const cpu      = parseFloat(document.getElementById('cpu-thresh').value);
-  const ram      = parseFloat(document.getElementById('ram-thresh').value);
-  const interval = parseInt(document.getElementById('interval-thresh').value);
-  
+  const cpu      = Number.parseFloat(document.getElementById('cpu-thresh').value);
+  const ram      = Number.parseFloat(document.getElementById('ram-thresh').value);
+  const interval = Number.parseInt(document.getElementById('interval-thresh').value, 10);
   try {
     await fetch('/api/thresholds', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({cpu, ram, interval})
     });
-    window._threshLoaded = false; // allow re-sync
-    await fetchStatus();
-  } catch(e) {
+    window._threshLoaded = false;
+  } catch (e) {
     console.error(e);
   } finally {
     setElementLoading('save-thresh-btn', false);
   }
 }
 
-// ── Logs ─────────────────────────────────────────────────────────────────────
 function logClass(line) {
   if (/ERROR|error/.test(line)) return 'error';
   if (/WARNING|warn|WARN|⚠️|🔴/.test(line)) return 'warn';
@@ -779,28 +866,73 @@ function logClass(line) {
   return 'info';
 }
 
-async function loadLogs() {
-  setElementLoading('refresh-logs-btn', true, '🔄 ...');
+function renderLogLines(lines) {
+  const box = document.getElementById('log-box');
+  box.innerHTML = (lines || []).map(l =>
+    `<div class="log-line ${logClass(l)}">${escapeHtml(l)}</div>`
+  ).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function loadLogs(showLoading = false) {
+  if (showLoading) setElementLoading('refresh-logs-btn', true, '🔄 ...');
   try {
-    const r = await fetch('/api/logs?lines=80');
+    const r = await fetch('/api/logs?lines=50');
     const d = await r.json();
-    const box = document.getElementById('log-box');
-    box.innerHTML = d.lines.map(l =>
-      `<div class="log-line ${logClass(l)}">${l.replace(/</g,'&lt;')}</div>`
-    ).join('');
-    box.scrollTop = box.scrollHeight;
-  } catch(e) {
+    renderLogLines(d.lines);
+  } catch (e) {
     console.error(e);
   } finally {
-    setElementLoading('refresh-logs-btn', false);
+    if (showLoading) setElementLoading('refresh-logs-btn', false);
   }
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-fetchStatus();
-loadLogs();
-refreshInterval = setInterval(fetchStatus, 5000);
-setInterval(loadLogs, 15000);
+function stopLiveUpdates() {
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function startPollingFallback() {
+  if (pollTimer) return;
+  pollTimer = setInterval(fetchStatus, 10000);
+}
+
+function connectEvents() {
+  if (document.hidden) return;
+  stopLiveUpdates();
+  if (typeof EventSource === 'undefined') {
+    startPollingFallback();
+    return;
+  }
+  eventSource = new EventSource('/api/events');
+  eventSource.addEventListener('metrics', (e) => {
+    try { applyMetrics(JSON.parse(e.data)); } catch (err) { console.error(err); }
+  });
+  eventSource.addEventListener('snapshot', (e) => {
+    try { updateDashboard(JSON.parse(e.data)); } catch (err) { console.error(err); }
+  });
+  eventSource.onerror = () => {
+    if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+      stopLiveUpdates();
+      startPollingFallback();
+    }
+  };
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopLiveUpdates();
+  else {
+    fetchStatus().finally(connectEvents);
+  }
+});
+
+fetchStatus().finally(connectEvents);
 </script>
 </body>
 </html>

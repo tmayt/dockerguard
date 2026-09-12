@@ -1,44 +1,111 @@
-from sqlalchemy import (
-    create_engine,
-    Column,
-    String,
-    Integer,
-    Float,
-    Boolean,
-)
-from sqlalchemy.orm import declarative_base, sessionmaker
+import sqlite3
+import threading
+from pathlib import Path
 
-DATABASE_URL = "sqlite:///data/guardian.db"
+DB_PATH = Path("data/guardian.db")
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
-
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine,
-)
-
-Base = declarative_base()
+_lock = threading.Lock()
+_conn: sqlite3.Connection | None = None
 
 
-class ContainerConfig(Base):
-    __tablename__ = "container_configs"
+def _connect() -> sqlite3.Connection:
+    global _conn
+    if _conn is None:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        _conn.row_factory = sqlite3.Row
+        _conn.execute("PRAGMA journal_mode=WAL")
+        _conn.execute("PRAGMA synchronous=NORMAL")
+        _conn.execute("PRAGMA temp_store=MEMORY")
+        _conn.execute("PRAGMA cache_size=-2000")
+        _conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS container_configs (
+                name TEXT PRIMARY KEY,
+                priority INTEGER DEFAULT 5,
+                suspended INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY,
+                cpu_threshold REAL DEFAULT 80,
+                ram_threshold REAL DEFAULT 80,
+                check_interval INTEGER DEFAULT 10
+            );
+            """
+        )
+        _conn.commit()
+    return _conn
 
-    name = Column(String, primary_key=True)
-    priority = Column(Integer, default=5)
-    suspended = Column(Boolean, default=False)
+
+def load_settings():
+    with _lock:
+        row = _connect().execute(
+            "SELECT cpu_threshold, ram_threshold, check_interval FROM settings WHERE id=1"
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "cpu_threshold": row["cpu_threshold"],
+            "ram_threshold": row["ram_threshold"],
+            "check_interval": row["check_interval"],
+        }
 
 
-class Settings(Base):
-    __tablename__ = "settings"
+def load_containers():
+    with _lock:
+        rows = _connect().execute(
+            "SELECT name, priority, suspended FROM container_configs"
+        ).fetchall()
+        return [
+            {
+                "name": r["name"],
+                "priority": int(r["priority"]),
+                "suspended": bool(r["suspended"]),
+            }
+            for r in rows
+        ]
 
-    id = Column(Integer, primary_key=True)
-    cpu_threshold = Column(Float, default=80)
-    ram_threshold = Column(Float, default=80)
-    check_interval = Column(Integer, default=10)
+
+def upsert_container(name, priority=None, suspended=None):
+    with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT priority, suspended FROM container_configs WHERE name=?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO container_configs(name, priority, suspended) VALUES (?, ?, ?)",
+                (
+                    name,
+                    5 if priority is None else int(priority),
+                    0 if suspended is None else int(bool(suspended)),
+                ),
+            )
+        else:
+            conn.execute(
+                "UPDATE container_configs SET priority=?, suspended=? WHERE name=?",
+                (
+                    row["priority"] if priority is None else int(priority),
+                    row["suspended"] if suspended is None else int(bool(suspended)),
+                    name,
+                ),
+            )
+        conn.commit()
 
 
-Base.metadata.create_all(bind=engine)
+def upsert_settings(cpu_threshold, ram_threshold, check_interval):
+    with _lock:
+        conn = _connect()
+        conn.execute(
+            """
+            INSERT INTO settings(id, cpu_threshold, ram_threshold, check_interval)
+            VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                cpu_threshold=excluded.cpu_threshold,
+                ram_threshold=excluded.ram_threshold,
+                check_interval=excluded.check_interval
+            """,
+            (cpu_threshold, ram_threshold, check_interval),
+        )
+        conn.commit()

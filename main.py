@@ -2,133 +2,52 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+import subprocess
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
 import docker
 import psutil
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
-from database import (
-    SessionLocal,
-    ContainerConfig,
-    Settings,
-)
-import os
+from database import load_containers, load_settings, upsert_container, upsert_settings
 
 curl_start = os.getenv("START_NOTIFICATION_CURL", "")
 curl_stop = os.getenv("STOP_NOTIFICATION_CURL", "")
 
-
-def load_state():
-    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL
-    global priority_map, suspended_containers
-
-    db = SessionLocal()
-
-    try:
-        settings = db.query(Settings).first()
-
-        if settings:
-            CPU_THRESHOLD = settings.cpu_threshold
-            RAM_THRESHOLD = settings.ram_threshold
-            CHECK_INTERVAL = settings.check_interval
-
-        configs = db.query(ContainerConfig).all()
-
-        priority_map = {
-            item.name: item.priority
-            for item in configs
-        }
-
-        suspended_containers = {
-            item.name
-            for item in configs
-            if item.suspended
-        }
-
-        for name in suspended_containers.copy():
-            try:
-                c = docker_client.containers.get(name)
-
-                if c.status == "running":
-                    c.stop(timeout=10)
-
-            except Exception as e:
-                logger.error(f"Failed restoring suspended state for {name}: {e}")
-
-        logger.info("✅ State loaded from SQLite")
-
-    finally:
-        db.close()
-
-
-def save_container(name, priority=None, suspended=None):
-    db = SessionLocal()
-
-    try:
-        obj = db.query(ContainerConfig).filter_by(name=name).first()
-
-        if not obj:
-            obj = ContainerConfig(name=name)
-            db.add(obj)
-
-        if priority is not None:
-            obj.priority = priority
-
-        if suspended is not None:
-            obj.suspended = suspended
-
-        db.commit()
-
-    finally:
-        db.close()
-
-
-def save_settings():
-    db = SessionLocal()
-
-    try:
-        settings = db.query(Settings).first()
-
-        if not settings:
-            settings = Settings(id=1)
-            db.add(settings)
-
-        settings.cpu_threshold = CPU_THRESHOLD
-        settings.ram_threshold = RAM_THRESHOLD
-        settings.check_interval = CHECK_INTERVAL
-
-        db.commit()
-
-    finally:
-        db.close()
+METRICS_INTERVAL = 5
+PRIORITY_MIN = 1
+PRIORITY_MAX = 10
+DEFAULT_PRIORITY = 5
+LOG_TAIL_MAX = 200
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-CPU_THRESHOLD = float(os.getenv("CPU_THRESHOLD", "80"))      # %
-RAM_THRESHOLD = float(os.getenv("RAM_THRESHOLD", "80"))      # %
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))      # seconds
+CPU_THRESHOLD = float(os.getenv("CPU_THRESHOLD", "80"))
+RAM_THRESHOLD = float(os.getenv("RAM_THRESHOLD", "80"))
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))
 CPU_HIGH_STREAK_REQUIRED = int(os.getenv("CPU_HIGH_STREAK", "3"))
 LOG_FILE = Path(os.getenv("LOG_FILE", "logs/guardian.log"))
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 logger = logging.getLogger("guardian")
+logger.setLevel(logging.INFO)
+logger.handlers.clear()
+logger.propagate = False
+_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+_file = RotatingFileHandler(LOG_FILE, maxBytes=512 * 1024, backupCount=1, encoding="utf-8")
+_file.setFormatter(_fmt)
+_stream = logging.StreamHandler()
+_stream.setFormatter(_fmt)
+logger.addHandler(_file)
+logger.addHandler(_stream)
 
 # ─── State ────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Docker Guardian")
+DASHBOARD_HTML = (Path(__file__).parent / "templates" / "index.html").read_text(encoding="utf-8")
 
 try:
     docker_client = docker.from_env()
@@ -140,18 +59,88 @@ except Exception as e:
     DOCKER_AVAILABLE = False
     logger.warning(f"⚠️  Docker not available: {e} — running in demo mode")
 
-# priority map: container_name -> priority (1=lowest, 10=highest)
 priority_map: dict[str, int] = {}
 suspended_containers: set[str] = set()
 monitor_running = False
 monitor_task: Optional[asyncio.Task] = None
+metrics_task: Optional[asyncio.Task] = None
 cpu_high_streak = 0
 resource_saturated = False
+cached_containers: list[dict] = []
+_prev_cpu: dict[str, tuple[int, int]] = {}
+subscribers: set[asyncio.Queue] = set()
+RAM_TOTAL_GB = round(psutil.virtual_memory().total / 1e9, 2)
+last_metrics = {
+    "cpu": 0.0,
+    "ram": 0.0,
+    "ram_used_gb": 0.0,
+    "ram_total_gb": RAM_TOTAL_GB,
+}
+
+
+def load_state():
+    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL
+    global priority_map, suspended_containers
+
+    settings = load_settings()
+    if settings:
+        CPU_THRESHOLD = settings["cpu_threshold"]
+        RAM_THRESHOLD = settings["ram_threshold"]
+        CHECK_INTERVAL = settings["check_interval"]
+
+    configs = load_containers()
+    priority_map = {item["name"]: int(item["priority"]) for item in configs}
+    suspended_containers = {item["name"] for item in configs if item["suspended"]}
+
+    for name in tuple(suspended_containers):
+        try:
+            c = docker_client.containers.get(name) if DOCKER_AVAILABLE else None
+            if c is not None and c.status == "running":
+                c.stop(timeout=10)
+        except Exception as e:
+            logger.error(f"Failed restoring suspended state for {name}: {e}")
+
+    logger.info("✅ State loaded from SQLite")
+
+
+def save_container(name, priority=None, suspended=None):
+    upsert_container(name, priority=priority, suspended=suspended)
+
+
+def save_settings():
+    upsert_settings(CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL)
+
+
+def as_priority(value) -> int:
+    try:
+        priority = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Priority must be a number")
+    if not PRIORITY_MIN <= priority <= PRIORITY_MAX:
+        raise HTTPException(400, f"Priority must be between {PRIORITY_MIN} and {PRIORITY_MAX}")
+    return priority
+
+
+def notify(template: str, name: str):
+    if not template:
+        return
+    try:
+        subprocess.Popen(
+            template.replace("#####", name),
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as e:
+        logger.error(f"Notification failed: {e}")
+
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 class PriorityUpdate(BaseModel):
     container_name: str
-    priority: int  # 1–10
+    priority: int = Field(..., ge=PRIORITY_MIN, le=PRIORITY_MAX)
+
 
 class ThresholdUpdate(BaseModel):
     cpu: Optional[float] = None
@@ -159,71 +148,255 @@ class ThresholdUpdate(BaseModel):
     interval: Optional[int] = None
 
 # ─── Docker helpers ───────────────────────────────────────────────────────────
-def get_containers():
+def collect_container_info() -> list[dict]:
     if not DOCKER_AVAILABLE:
         return []
     try:
-        return docker_client.containers.list(all=True)
+        raw = docker_client.api.containers(all=True)
     except Exception as e:
         logger.error(f"Failed to list containers: {e}")
         return []
+    prev_by_name = {c["name"]: c for c in cached_containers}
+    out = []
+    for item in raw:
+        names = item.get("Names") or []
+        if names:
+            name = names[0][1:] if names[0].startswith("/") else names[0]
+        else:
+            name = (item.get("Id") or "")[:12]
+        state = item.get("State") or ""
+        if isinstance(state, dict):
+            state = state.get("Status") or ""
+        prev = prev_by_name.get(name) or {}
+        out.append({
+            "id": item.get("Id") or "",
+            "name": name,
+            "status": state,
+            "image": item.get("Image") or "",
+            "priority": int(priority_map.get(name, DEFAULT_PRIORITY)),
+            "suspended_by_guardian": name in suspended_containers,
+            "cpu": None if state != "running" else prev.get("cpu"),
+            "ram_mb": None if state != "running" else prev.get("ram_mb"),
+        })
+    return out
+
+
+def _cpu_percent(cpu_stats: dict, name: str) -> float:
+    usage = cpu_stats.get("cpu_usage") or {}
+    total = int(usage.get("total_usage") or 0)
+    system = int(cpu_stats.get("system_cpu_usage") or 0)
+    online = cpu_stats.get("online_cpus")
+    if not online:
+        online = len(usage.get("percpu_usage") or []) or (os.cpu_count() or 1)
+    prev = _prev_cpu.get(name)
+    _prev_cpu[name] = (total, system)
+    if not prev:
+        return None
+    cpu_delta = total - prev[0]
+    sys_delta = system - prev[1]
+    if cpu_delta > 0 and sys_delta > 0:
+        return round((cpu_delta / sys_delta) * online * 100.0, 1)
+    return 0.0
+
+
+def _mem_usage_bytes(memory_stats: dict) -> int:
+    usage = int(memory_stats.get("usage") or 0)
+    stats = memory_stats.get("stats") or {}
+    cache = stats.get("total_inactive_file")
+    if cache is None:
+        cache = stats.get("inactive_file")
+    if cache is None:
+        cache = stats.get("cache")
+    if cache:
+        usage = max(0, usage - int(cache))
+    return usage
+
+
+def sample_container_stats(containers: list[dict]) -> dict:
+    if not DOCKER_AVAILABLE:
+        return {c["name"]: {"cpu": None, "ram_mb": None} for c in containers if c.get("name")}
+    usage = {}
+    live = set()
+    for c in containers:
+        name = c.get("name")
+        if not name:
+            continue
+        if c.get("status") != "running" or not c.get("id"):
+            usage[name] = {"cpu": None, "ram_mb": None}
+            continue
+        live.add(name)
+        try:
+            st = docker_client.api.stats(c["id"], stream=False, one_shot=True)
+        except Exception:
+            usage[name] = {"cpu": c.get("cpu"), "ram_mb": c.get("ram_mb")}
+            continue
+        ram_mb = round(_mem_usage_bytes(st.get("memory_stats") or {}) / (1024 * 1024), 1)
+        usage[name] = {
+            "cpu": _cpu_percent(st.get("cpu_stats") or {}, name),
+            "ram_mb": ram_mb,
+        }
+    for stale in list(_prev_cpu):
+        if stale not in live:
+            _prev_cpu.pop(stale, None)
+    return usage
+
+
+def apply_usage(usage: dict):
+    for c in cached_containers:
+        u = usage.get(c["name"])
+        if not u:
+            if c.get("status") != "running":
+                c["cpu"] = None
+                c["ram_mb"] = None
+            continue
+        c["cpu"] = u.get("cpu")
+        c["ram_mb"] = u.get("ram_mb")
+
+
+def usage_map() -> dict:
+    return {
+        c["name"]: {"cpu": c.get("cpu"), "ram_mb": c.get("ram_mb")}
+        for c in cached_containers
+    }
+
 
 def stop_container(name: str) -> bool:
     if not DOCKER_AVAILABLE:
         logger.info(f"[DEMO] Would stop container: {name}")
         suspended_containers.add(name)
-        save_container(
-            name,
-            suspended=True,
-        )
+        save_container(name, suspended=True)
         return True
     try:
         c = docker_client.containers.get(name)
         c.stop(timeout=10)
         suspended_containers.add(name)
+        save_container(name, suspended=True)
         logger.warning(f"🛑 Stopped low-priority container: {name}")
-        os.system(curl_stop.replace('#####', name))
+        notify(curl_stop, name)
         return True
     except Exception as e:
         logger.error(f"Failed to stop {name}: {e}")
         return False
 
+
 def start_container(name: str) -> bool:
     if not DOCKER_AVAILABLE:
         logger.info(f"[DEMO] Would start container: {name}")
         suspended_containers.discard(name)
-        save_container(
-            name,
-            suspended=False,
-        )
+        save_container(name, suspended=False)
         return True
     try:
         c = docker_client.containers.get(name)
         c.start()
         suspended_containers.discard(name)
-        save_container(
-            name,
-            suspended=False,
-        )
+        save_container(name, suspended=False)
         logger.info(f"▶️  Restarted container: {name}")
-        os.system(curl_start.replace('#####', name))
+        notify(curl_start, name)
         return True
     except Exception as e:
         logger.error(f"Failed to start {name}: {e}")
         return False
 
-# ─── Monitor loop ─────────────────────────────────────────────────────────────
+
+def sample_metrics():
+    mem = psutil.virtual_memory()
+    last_metrics["cpu"] = psutil.cpu_percent(None)
+    last_metrics["ram"] = mem.percent
+    last_metrics["ram_used_gb"] = round(mem.used / 1e9, 2)
+    last_metrics["ram_total_gb"] = RAM_TOTAL_GB
+
+
+def metrics_payload() -> dict:
+    return {
+        "cpu": last_metrics["cpu"],
+        "ram": last_metrics["ram"],
+        "ram_used_gb": last_metrics["ram_used_gb"],
+        "ram_total_gb": last_metrics["ram_total_gb"],
+        "overloaded": resource_saturated,
+        "cpu_high_streak": cpu_high_streak,
+        "cpu_high_streak_required": CPU_HIGH_STREAK_REQUIRED,
+        "monitor_running": monitor_running,
+        "usage": usage_map(),
+    }
+
+
+def full_payload() -> dict:
+    payload = metrics_payload()
+    payload.update({
+        "thresholds": {"cpu": CPU_THRESHOLD, "ram": RAM_THRESHOLD, "interval": CHECK_INTERVAL},
+        "docker_available": DOCKER_AVAILABLE,
+        "containers": [{k: v for k, v in c.items() if k != "id"} for c in cached_containers],
+        "suspended_count": len(suspended_containers),
+        "logs": tail_lines(LOG_FILE, 40),
+    })
+    return payload
+
+
+def publish(event: str, payload: dict):
+    if not subscribers:
+        return
+    blob = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    for q in tuple(subscribers):
+        try:
+            if q.full():
+                q.get_nowait()
+            q.put_nowait((event, blob))
+        except Exception:
+            pass
+
+
+async def refresh_containers_and_publish():
+    global cached_containers
+    cached_containers = await asyncio.to_thread(collect_container_info)
+    publish("snapshot", full_payload())
+
+
+def tail_lines(path: Path, n: int) -> list[str]:
+    n = max(1, min(int(n), LOG_TAIL_MAX))
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            if f.tell() == 0:
+                return []
+            data = b""
+            block = 4096
+            needed = n
+            while f.tell() > 0:
+                step = min(block, f.tell())
+                f.seek(-step, os.SEEK_CUR)
+                data = f.read(step) + data
+                f.seek(-step, os.SEEK_CUR)
+                if data.count(b"\n") >= needed or f.tell() == 0:
+                    break
+            return data.decode("utf-8", errors="replace").splitlines()[-n:]
+    except FileNotFoundError:
+        return []
+
+
+# ─── Monitor loops ────────────────────────────────────────────────────────────
+async def metrics_loop():
+    psutil.cpu_percent(None)
+    await asyncio.sleep(1)
+    while True:
+        sample_metrics()
+        usage = await asyncio.to_thread(sample_container_stats, list(cached_containers))
+        apply_usage(usage)
+        publish("metrics", metrics_payload())
+        await asyncio.sleep(METRICS_INTERVAL)
+
+
 async def monitor_loop():
-    global monitor_running, cpu_high_streak, resource_saturated
+    global cpu_high_streak, resource_saturated, cached_containers
     cpu_high_streak = 0
     resource_saturated = False
     logger.info(
         f"🚀 Monitor started — CPU>{CPU_THRESHOLD}% for {CPU_HIGH_STREAK_REQUIRED} intervals "
         f"| RAM>{RAM_THRESHOLD}% | every {CHECK_INTERVAL}s"
     )
+    await asyncio.sleep(METRICS_INTERVAL)
     while monitor_running:
-        cpu = psutil.cpu_percent(interval=5)
-        ram = psutil.virtual_memory().percent
+        cpu = last_metrics["cpu"]
+        ram = last_metrics["ram"]
 
         if cpu > CPU_THRESHOLD:
             cpu_high_streak += 1
@@ -240,157 +413,152 @@ async def monitor_loop():
                 f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% "
                 f"⏳ CPU high {cpu_high_streak}/{CPU_HIGH_STREAK_REQUIRED} consecutive intervals"
             )
-        else:
-            logger.info(f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% {'⚠️ OVERLOADED' if overloaded else '✅ OK'}")
+        elif overloaded:
+            logger.info(f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% ⚠️ OVERLOADED")
 
-        containers = get_containers()
+        containers = await asyncio.to_thread(collect_container_info)
+        mutated = False
 
         if overloaded:
-            # Sort running containers by priority (lowest first), skip already suspended
             candidates = sorted(
                 [
                     c for c in containers
-                    if c.status == "running"
-                    and c.name not in suspended_containers
-                    and priority_map.get(c.name, 5) < 5
+                    if c["status"] == "running"
+                    and c["name"] not in suspended_containers
+                    and c["priority"] < 5
                 ],
-                key=lambda c: priority_map.get(c.name, 5),
+                key=lambda c: c["priority"],
             )
             if candidates:
                 target = candidates[0]
                 logger.warning(
-                    f"🔴 Overload detected — stopping '{target.name}' "
-                    f"(priority={priority_map.get(target.name, 5)}, CPU={cpu:.1f}%, RAM={ram:.1f}%)"
+                    f"🔴 Overload detected — stopping '{target['name']}' "
+                    f"(priority={target['priority']}, CPU={cpu:.1f}%, RAM={ram:.1f}%)"
                 )
-                stop_container(target.name)
+                await asyncio.to_thread(stop_container, target["name"])
+                mutated = True
             else:
-                logger.warning(f"⚠️  Overloaded but no low-priority containers to stop")
-        else:
-            # Restore suspended containers (lowest priority last = start first)
-            for name in list(suspended_containers):
-                new_cpu = psutil.cpu_percent(interval=0.5)
-                new_ram = psutil.virtual_memory().percent
-                if new_cpu < CPU_THRESHOLD - 10 and new_ram < RAM_THRESHOLD - 10:
-                    logger.info(f"🟢 Resources freed — restoring '{name}'")
-                    start_container(name)
-                else:
-                    break
+                logger.warning("⚠️  Overloaded but no low-priority containers to stop")
+        elif suspended_containers and cpu < CPU_THRESHOLD - 10 and ram < RAM_THRESHOLD - 10:
+            name = max(
+                suspended_containers,
+                key=lambda n: int(priority_map.get(n, DEFAULT_PRIORITY)),
+            )
+            logger.info(f"🟢 Resources freed — restoring '{name}'")
+            await asyncio.to_thread(start_container, name)
+            mutated = True
 
-        await asyncio.sleep(CHECK_INTERVAL)
+        if mutated:
+            containers = await asyncio.to_thread(collect_container_info)
+        cached_containers = containers
+        publish("snapshot", full_payload())
+        await asyncio.sleep(max(3, CHECK_INTERVAL))
 
 # ─── API routes ───────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
-    global monitor_running, monitor_task
-    
+    global monitor_running, monitor_task, metrics_task
+    global cached_containers
     load_state()
-
+    cached_containers = await asyncio.to_thread(collect_container_info)
+    metrics_task = asyncio.create_task(metrics_loop())
     monitor_running = True
     monitor_task = asyncio.create_task(monitor_loop())
+
 
 @app.on_event("shutdown")
 async def shutdown():
     global monitor_running
     monitor_running = False
-    if monitor_task:
-        monitor_task.cancel()
+    for task in (monitor_task, metrics_task):
+        if task:
+            task.cancel()
+
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    with open(Path(__file__).parent / "templates" / "index.html", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
+async def dashboard():
+    return HTMLResponse(DASHBOARD_HTML)
+
 
 @app.get("/api/status")
 async def get_status():
-    cpu = psutil.cpu_percent(interval=0.5)
-    mem = psutil.virtual_memory()
-    containers = get_containers()
+    return full_payload()
 
-    container_list = []
-    for c in containers:
-        container_list.append({
-            "name": c.name,
-            "status": c.status,
-            "image": c.image.tags[0] if c.image.tags else c.image.short_id,
-            "priority": priority_map.get(c.name, 5),
-            "suspended_by_guardian": c.name in suspended_containers,
-        })
 
-    return {
-        "cpu": cpu,
-        "ram": mem.percent,
-        "ram_used_gb": round(mem.used / 1e9, 2),
-        "ram_total_gb": round(mem.total / 1e9, 2),
-        "overloaded": resource_saturated,
-        "cpu_high_streak": cpu_high_streak,
-        "cpu_high_streak_required": CPU_HIGH_STREAK_REQUIRED,
-        "thresholds": {"cpu": CPU_THRESHOLD, "ram": RAM_THRESHOLD, "interval": CHECK_INTERVAL},
-        "monitor_running": monitor_running,
-        "docker_available": DOCKER_AVAILABLE,
-        "containers": container_list,
-        "suspended_count": len(suspended_containers),
-    }
+@app.get("/api/events")
+async def status_events():
+    async def stream():
+        q: asyncio.Queue = asyncio.Queue(maxsize=1)
+        subscribers.add(q)
+        try:
+            yield f"event: snapshot\ndata: {json.dumps(full_payload(), separators=(',', ':'), ensure_ascii=False)}\n\n"
+            while True:
+                try:
+                    event, blob = await asyncio.wait_for(q.get(), timeout=25)
+                    yield f"event: {event}\ndata: {blob}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            subscribers.discard(q)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 @app.post("/api/priority")
 async def set_priority(update: PriorityUpdate):
-    if not 1 <= update.priority <= 10:
-        raise HTTPException(400, "Priority must be between 1 and 10")
+    priority = as_priority(update.priority)
+    priority_map[update.container_name] = priority
+    save_container(update.container_name, priority=priority)
+    logger.info(f"⚙️ Priority updated: {update.container_name} → {priority}")
+    for item in cached_containers:
+        if item["name"] == update.container_name:
+            item["priority"] = priority
+            break
+    publish("snapshot", full_payload())
+    return {"ok": True, "container": update.container_name, "priority": priority}
 
-    priority_map[update.container_name] = update.priority
 
-    save_container(
-        update.container_name,
-        priority=update.priority,
-    )
-
-    logger.info(
-        f"⚙️ Priority updated: {update.container_name} → {update.priority}"
-    )
-
-    return {
-        "ok": True,
-        "container": update.container_name,
-        "priority": update.priority,
-    }
-    
 @app.post("/api/thresholds")
 async def update_thresholds(update: ThresholdUpdate):
-    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL, monitor_running, monitor_task
+    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL
     if update.cpu is not None:
         CPU_THRESHOLD = update.cpu
     if update.ram is not None:
         RAM_THRESHOLD = update.ram
     if update.interval is not None:
-        CHECK_INTERVAL = update.interval
-    # Restart monitor with new settings
-    monitor_running = False
-    if monitor_task:
-        monitor_task.cancel()
-    await asyncio.sleep(0.1)
-    monitor_running = True
-    monitor_task = asyncio.create_task(monitor_loop())
+        CHECK_INTERVAL = max(3, int(update.interval))
     logger.info(f"⚙️  Thresholds updated: CPU={CPU_THRESHOLD}% RAM={RAM_THRESHOLD}% interval={CHECK_INTERVAL}s")
     save_settings()
+    publish("snapshot", full_payload())
     return {"ok": True, "cpu": CPU_THRESHOLD, "ram": RAM_THRESHOLD, "interval": CHECK_INTERVAL}
+
 
 @app.post("/api/container/{name}/start")
 async def manual_start(name: str):
-    ok = start_container(name)
+    ok = await asyncio.to_thread(start_container, name)
+    await refresh_containers_and_publish()
     return {"ok": ok}
+
 
 @app.post("/api/container/{name}/stop")
 async def manual_stop(name: str):
-    ok = stop_container(name)
+    ok = await asyncio.to_thread(stop_container, name)
+    await refresh_containers_and_publish()
     return {"ok": ok}
 
+
 @app.get("/api/logs")
-async def get_logs(lines: int = 100):
-    try:
-        with open(LOG_FILE, encoding="utf-8") as f:
-            all_lines = f.readlines()
-        return {"lines": all_lines[-lines:]}
-    except FileNotFoundError:
-        return {"lines": []}
+async def get_logs(lines: int = 80):
+    return {"lines": await asyncio.to_thread(tail_lines, LOG_FILE, lines)}
+
 
 @app.get("/api/monitor/toggle")
 async def toggle_monitor():
@@ -400,9 +568,11 @@ async def toggle_monitor():
         if monitor_task:
             monitor_task.cancel()
         logger.info("⏸️  Monitor paused by user")
+        publish("snapshot", full_payload())
         return {"running": False}
-    else:
-        monitor_running = True
-        monitor_task = asyncio.create_task(monitor_loop())
-        logger.info("▶️  Monitor resumed by user")
-        return {"running": True}
+
+    monitor_running = True
+    monitor_task = asyncio.create_task(monitor_loop())
+    logger.info("▶️  Monitor resumed by user")
+    publish("snapshot", full_payload())
+    return {"running": True}
