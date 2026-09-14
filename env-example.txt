@@ -1,3 +1,10 @@
 START_NOTIFICATION_CURL="curl -X POST https://example.com/start -H 'Content-Type: application/json' -d '{\"status\":\"started\"}'"
 
 STOP_NOTIFICATION_CURL="curl -X POST https://example.com/stop -H 'Content-Type: application/json' -d '{\"status\":\"stopped\"}'"
+
+# Optional: override detected host IP shown in the dashboard header
+# SERVER_IP=203.0.113.10
+
+# Optional: lower guardian CPU usage
+# METRICS_INTERVAL=10
+# CONTAINER_STATS_EVERY=2

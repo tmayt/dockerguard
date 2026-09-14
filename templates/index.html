@@ -66,6 +66,49 @@
   .logo-text { font-size: 19px; font-weight: 700; letter-spacing: -0.3px; color: #fff; }
   .logo-sub  { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
 
+  .server-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    margin: 0 20px;
+    min-width: 0;
+  }
+
+  .server-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+    font-size: 11px;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .server-chip .k {
+    color: var(--muted);
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-size: 10px;
+  }
+
+  .server-chip .v {
+    color: var(--text);
+    font-family: var(--mono);
+    font-weight: 600;
+    direction: ltr;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .server-chip .v.accent { color: var(--accent); }
+
   .header-status {
     display: flex;
     align-items: center;
@@ -74,6 +117,12 @@
     padding: 6px 14px;
     border-radius: 99px;
     border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 1100px) {
+    header { flex-wrap: wrap; gap: 12px; }
+    .server-strip { order: 3; width: 100%; margin: 0; justify-content: flex-start; }
   }
 
   .pulse {
@@ -420,6 +469,14 @@
       <div class="logo-sub">resource monitor & auto-scaler</div>
     </div>
   </div>
+  <div class="server-strip" id="server-strip" title="اطلاعات ثابت سرور">
+    <div class="server-chip"><span class="k">IP</span><span class="v accent" id="srv-ip">—</span></div>
+    <div class="server-chip"><span class="k">Host</span><span class="v" id="srv-host">—</span></div>
+    <div class="server-chip"><span class="k">OS</span><span class="v" id="srv-os">—</span></div>
+    <div class="server-chip"><span class="k">CPU</span><span class="v" id="srv-cpu">—</span></div>
+    <div class="server-chip"><span class="k">RAM</span><span class="v" id="srv-ram">—</span></div>
+    <div class="server-chip"><span class="k">Uptime</span><span class="v" id="srv-uptime">—</span></div>
+  </div>
   <div class="header-status">
     <span id="hdr-text" style="font-size:13px;color:var(--muted)">در حال بارگذاری...</span>
     <div class="pulse off" id="hdr-pulse"></div>
@@ -521,7 +578,7 @@
             <span>بازه بررسی</span>
             <span id="interval-label">10s</span>
           </div>
-          <input type="range" class="thresh" min="3" max="120" value="10" id="interval-thresh" 
+          <input type="range" class="thresh" min="5" max="120" value="10" id="interval-thresh" 
                  oninput="document.getElementById('interval-label').textContent=this.value+'s'">
         </div>
 
@@ -588,6 +645,30 @@ async function fetchStatus() {
   }
 }
 
+function formatUptime(sec) {
+  sec = Math.max(0, Number(sec) || 0);
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function applyServerInfo(s) {
+  if (!s) return;
+  if (s.ip != null) document.getElementById('srv-ip').textContent = s.ip;
+  if (s.hostname != null) document.getElementById('srv-host').textContent = s.hostname;
+  if (s.os != null) {
+    const osEl = document.getElementById('srv-os');
+    osEl.textContent = s.os;
+    osEl.title = [s.os, s.kernel, s.arch].filter(Boolean).join(' · ');
+  }
+  if (s.cpu_cores != null) document.getElementById('srv-cpu').textContent = s.cpu_cores + ' cores';
+  if (s.ram_total_gb != null) document.getElementById('srv-ram').textContent = s.ram_total_gb + ' GB';
+  if (s.uptime_sec != null) document.getElementById('srv-uptime').textContent = formatUptime(s.uptime_sec);
+}
+
 function colorFor(val, warn=70, danger=85) {
   if (val >= danger) return 'var(--danger)';
   if (val >= warn)   return 'var(--warn)';
@@ -601,6 +682,8 @@ function classFor(val, warn=70, danger=85) {
 }
 
 function applyMetrics(d) {
+  if (d.server) applyServerInfo(d.server);
+
   const cpu = Number(d.cpu || 0).toFixed(1);
   const ram = Number(d.ram || 0).toFixed(1);
 

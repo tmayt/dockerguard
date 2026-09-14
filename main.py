@@ -2,7 +2,10 @@ import asyncio
 import json
 import logging
 import os
+import platform
+import socket
 import subprocess
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
@@ -18,7 +21,8 @@ from database import load_containers, load_settings, upsert_container, upsert_se
 curl_start = os.getenv("START_NOTIFICATION_CURL", "")
 curl_stop = os.getenv("STOP_NOTIFICATION_CURL", "")
 
-METRICS_INTERVAL = 5
+METRICS_INTERVAL = int(os.getenv("METRICS_INTERVAL", "10"))
+CONTAINER_STATS_EVERY = int(os.getenv("CONTAINER_STATS_EVERY", "2"))
 PRIORITY_MIN = 1
 PRIORITY_MAX = 10
 DEFAULT_PRIORITY = 5
@@ -75,6 +79,53 @@ last_metrics = {
     "ram": 0.0,
     "ram_used_gb": 0.0,
     "ram_total_gb": RAM_TOTAL_GB,
+}
+_stats_tick = 0
+_cached_logs: list[str] = []
+_cached_logs_at = 0.0
+LOG_CACHE_TTL = 8.0
+
+
+def _detect_primary_ip() -> str:
+    env_ip = (os.getenv("SERVER_IP") or "").strip()
+    if env_ip:
+        return env_ip
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except Exception:
+        return "—"
+
+
+def _detect_os_label() -> str:
+    try:
+        path = Path("/etc/os-release")
+        if path.exists():
+            data = {}
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    data[k] = v.strip().strip('"')
+            return data.get("PRETTY_NAME") or data.get("NAME") or platform.system()
+    except Exception:
+        pass
+    return f"{platform.system()} {platform.release()}".strip()
+
+
+SERVER_INFO = {
+    "hostname": platform.node() or "—",
+    "ip": _detect_primary_ip(),
+    "os": _detect_os_label(),
+    "kernel": platform.release() or "—",
+    "arch": platform.machine() or "—",
+    "cpu_cores": os.cpu_count() or 1,
+    "ram_total_gb": RAM_TOTAL_GB,
+    "boot_time": int(psutil.boot_time()),
 }
 
 
@@ -317,7 +368,21 @@ def metrics_payload() -> dict:
         "cpu_high_streak_required": CPU_HIGH_STREAK_REQUIRED,
         "monitor_running": monitor_running,
         "usage": usage_map(),
+        "server": {
+            **SERVER_INFO,
+            "uptime_sec": max(0, int(time.time() - SERVER_INFO["boot_time"])),
+        },
     }
+
+
+def cached_tail_logs(n: int = 40) -> list[str]:
+    global _cached_logs, _cached_logs_at
+    now = time.monotonic()
+    if now - _cached_logs_at < LOG_CACHE_TTL and _cached_logs:
+        return _cached_logs[-n:]
+    _cached_logs = tail_lines(LOG_FILE, n)
+    _cached_logs_at = now
+    return _cached_logs
 
 
 def full_payload() -> dict:
@@ -327,7 +392,7 @@ def full_payload() -> dict:
         "docker_available": DOCKER_AVAILABLE,
         "containers": [{k: v for k, v in c.items() if k != "id"} for c in cached_containers],
         "suspended_count": len(suspended_containers),
-        "logs": tail_lines(LOG_FILE, 40),
+        "logs": cached_tail_logs(40),
     })
     return payload
 
@@ -345,10 +410,15 @@ def publish(event: str, payload: dict):
             pass
 
 
+def publish_snapshot():
+    if subscribers:
+        publish("snapshot", full_payload())
+
+
 async def refresh_containers_and_publish():
     global cached_containers
     cached_containers = await asyncio.to_thread(collect_container_info)
-    publish("snapshot", full_payload())
+    publish_snapshot()
 
 
 def tail_lines(path: Path, n: int) -> list[str]:
@@ -375,14 +445,23 @@ def tail_lines(path: Path, n: int) -> list[str]:
 
 # ─── Monitor loops ────────────────────────────────────────────────────────────
 async def metrics_loop():
+    global _stats_tick
     psutil.cpu_percent(None)
     await asyncio.sleep(1)
     while True:
+        has_viewers = bool(subscribers)
+        # Host CPU/RAM via psutil is cheap and keeps the monitor accurate.
         sample_metrics()
-        usage = await asyncio.to_thread(sample_container_stats, list(cached_containers))
-        apply_usage(usage)
-        publish("metrics", metrics_payload())
-        await asyncio.sleep(METRICS_INTERVAL)
+        if has_viewers:
+            # Docker stats() is expensive — throttle and skip when nobody is watching.
+            if _stats_tick % max(1, CONTAINER_STATS_EVERY) == 0:
+                usage = await asyncio.to_thread(sample_container_stats, list(cached_containers))
+                apply_usage(usage)
+            _stats_tick += 1
+            publish("metrics", metrics_payload())
+        else:
+            _stats_tick = 0
+        await asyncio.sleep(max(5, METRICS_INTERVAL))
 
 
 async def monitor_loop():
@@ -451,8 +530,8 @@ async def monitor_loop():
         if mutated:
             containers = await asyncio.to_thread(collect_container_info)
         cached_containers = containers
-        publish("snapshot", full_payload())
-        await asyncio.sleep(max(3, CHECK_INTERVAL))
+        publish_snapshot()
+        await asyncio.sleep(max(5, CHECK_INTERVAL))
 
 # ─── API routes ───────────────────────────────────────────────────────────────
 @app.on_event("startup")
@@ -460,6 +539,10 @@ async def startup():
     global monitor_running, monitor_task, metrics_task
     global cached_containers
     load_state()
+    logger.info(
+        f"🖥️  Server {SERVER_INFO['hostname']} ip={SERVER_INFO['ip']} "
+        f"cpu={SERVER_INFO['cpu_cores']} ram={SERVER_INFO['ram_total_gb']}GB"
+    )
     cached_containers = await asyncio.to_thread(collect_container_info)
     metrics_task = asyncio.create_task(metrics_loop())
     monitor_running = True
@@ -522,7 +605,7 @@ async def set_priority(update: PriorityUpdate):
         if item["name"] == update.container_name:
             item["priority"] = priority
             break
-    publish("snapshot", full_payload())
+    publish_snapshot()
     return {"ok": True, "container": update.container_name, "priority": priority}
 
 
@@ -534,10 +617,10 @@ async def update_thresholds(update: ThresholdUpdate):
     if update.ram is not None:
         RAM_THRESHOLD = update.ram
     if update.interval is not None:
-        CHECK_INTERVAL = max(3, int(update.interval))
+        CHECK_INTERVAL = max(5, int(update.interval))
     logger.info(f"⚙️  Thresholds updated: CPU={CPU_THRESHOLD}% RAM={RAM_THRESHOLD}% interval={CHECK_INTERVAL}s")
     save_settings()
-    publish("snapshot", full_payload())
+    publish_snapshot()
     return {"ok": True, "cpu": CPU_THRESHOLD, "ram": RAM_THRESHOLD, "interval": CHECK_INTERVAL}
 
 
@@ -568,11 +651,11 @@ async def toggle_monitor():
         if monitor_task:
             monitor_task.cancel()
         logger.info("⏸️  Monitor paused by user")
-        publish("snapshot", full_payload())
+        publish_snapshot()
         return {"running": False}
 
     monitor_running = True
     monitor_task = asyncio.create_task(monitor_loop())
     logger.info("▶️  Monitor resumed by user")
-    publish("snapshot", full_payload())
+    publish_snapshot()
     return {"running": True}
