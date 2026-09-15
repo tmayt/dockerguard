@@ -19,25 +19,41 @@ import docker
 import psutil
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from database import load_containers, load_settings, upsert_container, upsert_settings
 
-load_dotenv()
+# Prefer values from .env over empty/placeholder process env (common with Compose).
+load_dotenv(override=True)
 
-curl_start = os.getenv("START_NOTIFICATION_CURL", "")
-curl_stop = os.getenv("STOP_NOTIFICATION_CURL", "")
 
-METRICS_INTERVAL = int(os.getenv("METRICS_INTERVAL", "10"))
-CONTAINER_STATS_EVERY = int(os.getenv("CONTAINER_STATS_EVERY", "2"))
+def _env(key: str, default: str = "") -> str:
+    val = os.getenv(key, default)
+    if val is None:
+        return default
+    val = str(val).strip()
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+        val = val[1:-1].strip()
+    return val
+
+
+curl_start = _env("START_NOTIFICATION_CURL")
+curl_stop = _env("STOP_NOTIFICATION_CURL")
+
+METRICS_INTERVAL = int(_env("METRICS_INTERVAL", "10") or "10")
+CONTAINER_STATS_EVERY = int(_env("CONTAINER_STATS_EVERY", "2") or "2")
 PRIORITY_MIN = 1
 PRIORITY_MAX = 10
 DEFAULT_PRIORITY = 5
 LOG_TAIL_MAX = 200
+
+
 def _resolve_disk_path() -> str:
-    configured = (os.getenv("DISK_PATH") or "").strip()
+    configured = _env("DISK_PATH")
     if configured:
         return configured
     # Prefer host root when mounted read-only into the container
@@ -53,26 +69,27 @@ def _resolve_disk_path() -> str:
 
 DISK_PATH = _resolve_disk_path()
 
-AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
-SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
-AUTH_ENABLED = bool(AUTH_PASSWORD)
+AUTH_USERNAME = _env("AUTH_USERNAME", "admin") or "admin"
+AUTH_PASSWORD = _env("AUTH_PASSWORD")
+SESSION_SECRET = _env("SESSION_SECRET") or secrets.token_hex(32)
+# Auth is ALWAYS required. Missing password = refuse all dashboard access.
+AUTH_CONFIGURED = bool(AUTH_PASSWORD)
 
-SMTP_HOST = (os.getenv("SMTP_HOST") or "").strip()
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER or "docker-guardian@localhost")
-SMTP_TO = os.getenv("SMTP_TO", "")
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes", "on")
+SMTP_HOST = _env("SMTP_HOST")
+SMTP_PORT = int(_env("SMTP_PORT", "587") or "587")
+SMTP_USER = _env("SMTP_USER")
+SMTP_PASSWORD = _env("SMTP_PASSWORD")
+SMTP_FROM = _env("SMTP_FROM", SMTP_USER or "docker-guardian@localhost")
+SMTP_TO = _env("SMTP_TO")
+SMTP_USE_TLS = _env("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes", "on")
 EMAIL_ENABLED = bool(SMTP_HOST and SMTP_TO)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-CPU_THRESHOLD = float(os.getenv("CPU_THRESHOLD", "80"))
-RAM_THRESHOLD = float(os.getenv("RAM_THRESHOLD", "80"))
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))
-CPU_HIGH_STREAK_REQUIRED = int(os.getenv("CPU_HIGH_STREAK", "3"))
-LOG_FILE = Path(os.getenv("LOG_FILE", "logs/guardian.log"))
+CPU_THRESHOLD = float(_env("CPU_THRESHOLD", "80") or "80")
+RAM_THRESHOLD = float(_env("RAM_THRESHOLD", "80") or "80")
+CHECK_INTERVAL = int(_env("CHECK_INTERVAL", "10") or "10")
+CPU_HIGH_STREAK_REQUIRED = int(_env("CPU_HIGH_STREAK", "3") or "3")
+LOG_FILE = Path(_env("LOG_FILE", "logs/guardian.log") or "logs/guardian.log")
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -93,7 +110,50 @@ TEMPLATES = Path(__file__).parent / "templates"
 DASHBOARD_HTML = (TEMPLATES / "index.html").read_text(encoding="utf-8")
 LOGIN_HTML = (TEMPLATES / "login.html").read_text(encoding="utf-8")
 
+PUBLIC_PATHS = {"/login", "/logout", "/healthz"}
+
 app = FastAPI(title="Docker Guardian")
+
+
+class AuthGateMiddleware:
+    """Require a valid session for every page/API except public paths."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path") or "/"
+        if path in PUBLIC_PATHS or path.startswith("/static"):
+            await self.app(scope, receive, send)
+            return
+
+        if not AUTH_CONFIGURED:
+            response: Response
+            if path.startswith("/api/"):
+                response = JSONResponse({"detail": "AUTH_PASSWORD is not configured"}, status_code=503)
+            else:
+                response = _render_login("AUTH_PASSWORD در فایل .env تنظیم نشده است")
+            await response(scope, receive, send)
+            return
+
+        session = scope.get("session") or {}
+        if session.get("authenticated") is True:
+            await self.app(scope, receive, send)
+            return
+
+        if path.startswith("/api/"):
+            response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        else:
+            response = RedirectResponse(url="/login", status_code=303)
+        await response(scope, receive, send)
+
+
+# Order matters: last added runs first. Session must wrap Auth so scope['session'] exists.
+app.add_middleware(AuthGateMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
@@ -140,11 +200,10 @@ _stats_tick = 0
 _cached_logs: list[str] = []
 _cached_logs_at = 0.0
 LOG_CACHE_TTL = 8.0
-PUBLIC_PATHS = {"/login", "/logout", "/healthz"}
 
 
 def _detect_primary_ip() -> str:
-    env_ip = (os.getenv("SERVER_IP") or "").strip()
+    env_ip = _env("SERVER_IP")
     if env_ip:
         return env_ip
     try:
@@ -196,29 +255,21 @@ def _render_login(error: str = "") -> HTMLResponse:
 
 
 def _is_authed(request: Request) -> bool:
-    if not AUTH_ENABLED:
-        return True
-    return bool(request.session.get("authenticated"))
+    return AUTH_CONFIGURED and request.session.get("authenticated") is True
 
 
 def _verify_password(username: str, password: str) -> bool:
-    user_ok = hmac.compare_digest(username.encode("utf-8"), AUTH_USERNAME.encode("utf-8"))
-    pass_ok = hmac.compare_digest(password.encode("utf-8"), AUTH_PASSWORD.encode("utf-8"))
+    if not AUTH_CONFIGURED:
+        return False
+    user_ok = hmac.compare_digest(
+        username.encode("utf-8"),
+        AUTH_USERNAME.encode("utf-8"),
+    )
+    pass_ok = hmac.compare_digest(
+        password.encode("utf-8"),
+        AUTH_PASSWORD.encode("utf-8"),
+    )
     return user_ok and pass_ok
-
-
-@app.middleware("http")
-async def auth_middleware(request: Request, call_next):
-    path = request.url.path
-    if path in PUBLIC_PATHS or path.startswith("/static"):
-        return await call_next(request)
-    if not AUTH_ENABLED:
-        return await call_next(request)
-    if _is_authed(request):
-        return await call_next(request)
-    if path.startswith("/api/"):
-        return HTMLResponse('{"detail":"Unauthorized"}', status_code=401, media_type="application/json")
-    return RedirectResponse(url="/login", status_code=303)
 
 
 def load_state():
@@ -569,7 +620,8 @@ def full_payload() -> dict:
         "containers": [{k: v for k, v in c.items() if k != "id"} for c in cached_containers],
         "suspended_count": len(suspended_containers),
         "logs": cached_tail_logs(40),
-        "auth_enabled": AUTH_ENABLED,
+        "auth_enabled": True,
+        "auth_configured": AUTH_CONFIGURED,
         "email_enabled": EMAIL_ENABLED,
     })
     return payload
@@ -718,10 +770,10 @@ async def startup():
     global monitor_running, monitor_task, metrics_task
     global cached_containers
     load_state()
-    if not AUTH_ENABLED:
-        logger.warning("⚠️  AUTH_PASSWORD is empty — dashboard auth is DISABLED")
+    if not AUTH_CONFIGURED:
+        logger.error("❌ AUTH_PASSWORD is missing — login required but not configured")
     else:
-        logger.info(f"🔐 Auth enabled for user '{AUTH_USERNAME}'")
+        logger.info(f"🔐 Auth required for user '{AUTH_USERNAME}'")
     if EMAIL_ENABLED:
         logger.info(f"📧 SMTP alerts enabled → {SMTP_TO} via {SMTP_HOST}:{SMTP_PORT}")
     else:
@@ -756,32 +808,38 @@ async def healthz():
 async def login_page(request: Request):
     if _is_authed(request):
         return RedirectResponse(url="/", status_code=303)
-    if not AUTH_ENABLED:
-        return RedirectResponse(url="/", status_code=303)
+    if not AUTH_CONFIGURED:
+        return _render_login("AUTH_PASSWORD در فایل .env تنظیم نشده است")
     return _render_login()
 
 
 @app.post("/login")
 async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
-    if not AUTH_ENABLED:
-        return RedirectResponse(url="/", status_code=303)
+    if not AUTH_CONFIGURED:
+        return _render_login("AUTH_PASSWORD در فایل .env تنظیم نشده است")
     # tiny delay to slow brute force
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(0.2)
     if _verify_password(username.strip(), password):
         request.session.clear()
         request.session["authenticated"] = True
         request.session["user"] = AUTH_USERNAME
         request.session["csrf"] = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
-        logger.info(f"🔓 Login success for '{AUTH_USERNAME}' from {request.client.host if request.client else '?'}")
+        logger.info(
+            f"🔓 Login success for '{AUTH_USERNAME}' "
+            f"from {request.client.host if request.client else '?'}"
+        )
         return RedirectResponse(url="/", status_code=303)
     logger.warning(f"🔒 Login failed from {request.client.host if request.client else '?'}")
     return _render_login("نام کاربری یا رمز عبور اشتباه است")
 
 
 @app.get("/logout")
+@app.post("/logout")
 async def logout(request: Request):
     request.session.clear()
-    return RedirectResponse(url="/login", status_code=303)
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie("guardian_session", path="/")
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
