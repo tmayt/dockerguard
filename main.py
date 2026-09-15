@@ -1,22 +1,31 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
 import platform
+import secrets
+import smtplib
 import socket
 import subprocess
 import time
+from email.message import EmailMessage
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
 import docker
 import psutil
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from dotenv import load_dotenv
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.middleware.sessions import SessionMiddleware
 
 from database import load_containers, load_settings, upsert_container, upsert_settings
+
+load_dotenv()
 
 curl_start = os.getenv("START_NOTIFICATION_CURL", "")
 curl_stop = os.getenv("STOP_NOTIFICATION_CURL", "")
@@ -27,6 +36,36 @@ PRIORITY_MIN = 1
 PRIORITY_MAX = 10
 DEFAULT_PRIORITY = 5
 LOG_TAIL_MAX = 200
+def _resolve_disk_path() -> str:
+    configured = (os.getenv("DISK_PATH") or "").strip()
+    if configured:
+        return configured
+    # Prefer host root when mounted read-only into the container
+    for candidate in ("/host", "/"):
+        try:
+            if Path(candidate).exists():
+                psutil.disk_usage(candidate)
+                return candidate
+        except Exception:
+            continue
+    return "/"
+
+
+DISK_PATH = _resolve_disk_path()
+
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
+SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
+AUTH_ENABLED = bool(AUTH_PASSWORD)
+
+SMTP_HOST = (os.getenv("SMTP_HOST") or "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER or "docker-guardian@localhost")
+SMTP_TO = os.getenv("SMTP_TO", "")
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes", "on")
+EMAIL_ENABLED = bool(SMTP_HOST and SMTP_TO)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 CPU_THRESHOLD = float(os.getenv("CPU_THRESHOLD", "80"))
@@ -50,8 +89,19 @@ logger.addHandler(_file)
 logger.addHandler(_stream)
 
 # ─── State ────────────────────────────────────────────────────────────────────
+TEMPLATES = Path(__file__).parent / "templates"
+DASHBOARD_HTML = (TEMPLATES / "index.html").read_text(encoding="utf-8")
+LOGIN_HTML = (TEMPLATES / "login.html").read_text(encoding="utf-8")
+
 app = FastAPI(title="Docker Guardian")
-DASHBOARD_HTML = (Path(__file__).parent / "templates" / "index.html").read_text(encoding="utf-8")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    session_cookie="guardian_session",
+    max_age=60 * 60 * 24 * 7,
+    same_site="lax",
+    https_only=False,
+)
 
 try:
     docker_client = docker.from_env()
@@ -72,6 +122,7 @@ cpu_high_streak = 0
 resource_saturated = False
 cached_containers: list[dict] = []
 _prev_cpu: dict[str, tuple[int, int]] = {}
+_prev_status: dict[str, str] = {}
 subscribers: set[asyncio.Queue] = set()
 RAM_TOTAL_GB = round(psutil.virtual_memory().total / 1e9, 2)
 last_metrics = {
@@ -79,11 +130,17 @@ last_metrics = {
     "ram": 0.0,
     "ram_used_gb": 0.0,
     "ram_total_gb": RAM_TOTAL_GB,
+    "disk_percent": 0.0,
+    "disk_used_gb": 0.0,
+    "disk_free_gb": 0.0,
+    "disk_total_gb": 0.0,
+    "disk_path": DISK_PATH,
 }
 _stats_tick = 0
 _cached_logs: list[str] = []
 _cached_logs_at = 0.0
 LOG_CACHE_TTL = 8.0
+PUBLIC_PATHS = {"/login", "/logout", "/healthz"}
 
 
 def _detect_primary_ip() -> str:
@@ -127,6 +184,41 @@ SERVER_INFO = {
     "ram_total_gb": RAM_TOTAL_GB,
     "boot_time": int(psutil.boot_time()),
 }
+
+
+def _render_login(error: str = "") -> HTMLResponse:
+    html = LOGIN_HTML.replace("{% if error %}", "").replace("{% endif %}", "")
+    if error:
+        html = html.replace("{{ error }}", error)
+    else:
+        html = html.replace('<div class="error">{{ error }}</div>', "")
+    return HTMLResponse(html, status_code=401 if error else 200)
+
+
+def _is_authed(request: Request) -> bool:
+    if not AUTH_ENABLED:
+        return True
+    return bool(request.session.get("authenticated"))
+
+
+def _verify_password(username: str, password: str) -> bool:
+    user_ok = hmac.compare_digest(username.encode("utf-8"), AUTH_USERNAME.encode("utf-8"))
+    pass_ok = hmac.compare_digest(password.encode("utf-8"), AUTH_PASSWORD.encode("utf-8"))
+    return user_ok and pass_ok
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS or path.startswith("/static"):
+        return await call_next(request)
+    if not AUTH_ENABLED:
+        return await call_next(request)
+    if _is_authed(request):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return HTMLResponse('{"detail":"Unauthorized"}', status_code=401, media_type="application/json")
+    return RedirectResponse(url="/login", status_code=303)
 
 
 def load_state():
@@ -185,6 +277,74 @@ def notify(template: str, name: str):
         )
     except Exception as e:
         logger.error(f"Notification failed: {e}")
+
+
+def send_email(subject: str, body: str):
+    if not EMAIL_ENABLED:
+        return
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM
+        msg["To"] = SMTP_TO
+        msg.set_content(body)
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+            smtp.ehlo()
+            if SMTP_USE_TLS:
+                smtp.starttls()
+                smtp.ehlo()
+            if SMTP_USER:
+                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        logger.info(f"📧 Email sent: {subject}")
+    except Exception as e:
+        logger.error(f"Email failed: {e}")
+
+
+def notify_container_event(name: str, event: str):
+    host = SERVER_INFO.get("hostname") or "server"
+    ip = SERVER_INFO.get("ip") or "—"
+    if event == "started":
+        notify(curl_start, name)
+        send_email(
+            f"[Docker Guardian] سرویس روشن شد: {name}",
+            f"کانتینر «{name}» روی سرور {host} ({ip}) روشن / در حال اجرا شد.\n\nزمان: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        )
+    elif event == "stopped":
+        notify(curl_stop, name)
+        send_email(
+            f"[Docker Guardian] سرویس پایین آمد: {name}",
+            f"کانتینر «{name}» روی سرور {host} ({ip}) متوقف / خارج شد.\n\nزمان: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        )
+
+
+def detect_status_transitions(containers: list[dict]):
+    global _prev_status
+    current = {c["name"]: (c.get("status") or "").lower() for c in containers if c.get("name")}
+    if not _prev_status:
+        _prev_status = current
+        return
+
+    for name, status in current.items():
+        prev = _prev_status.get(name)
+        if prev is None:
+            continue
+        was_up = prev == "running"
+        is_up = status == "running"
+        if was_up and not is_up:
+            logger.warning(f"📉 Service down: {name} ({prev} → {status})")
+            notify_container_event(name, "stopped")
+        elif (not was_up) and is_up:
+            logger.info(f"📈 Service up: {name} ({prev} → {status})")
+            notify_container_event(name, "started")
+
+    for name, prev in _prev_status.items():
+        if name not in current and prev == "running":
+            logger.warning(f"📉 Service disappeared: {name}")
+            notify_container_event(name, "stopped")
+
+    _prev_status = current
 
 
 # ─── Models ───────────────────────────────────────────────────────────────────
@@ -323,7 +483,6 @@ def stop_container(name: str) -> bool:
         suspended_containers.add(name)
         save_container(name, suspended=True)
         logger.warning(f"🛑 Stopped low-priority container: {name}")
-        notify(curl_stop, name)
         return True
     except Exception as e:
         logger.error(f"Failed to stop {name}: {e}")
@@ -342,11 +501,22 @@ def start_container(name: str) -> bool:
         suspended_containers.discard(name)
         save_container(name, suspended=False)
         logger.info(f"▶️  Restarted container: {name}")
-        notify(curl_start, name)
         return True
     except Exception as e:
         logger.error(f"Failed to start {name}: {e}")
         return False
+
+
+def sample_disk():
+    try:
+        du = psutil.disk_usage(DISK_PATH)
+        last_metrics["disk_percent"] = round(du.percent, 1)
+        last_metrics["disk_used_gb"] = round(du.used / 1e9, 2)
+        last_metrics["disk_free_gb"] = round(du.free / 1e9, 2)
+        last_metrics["disk_total_gb"] = round(du.total / 1e9, 2)
+        last_metrics["disk_path"] = DISK_PATH
+    except Exception as e:
+        logger.error(f"Disk sample failed: {e}")
 
 
 def sample_metrics():
@@ -355,6 +525,7 @@ def sample_metrics():
     last_metrics["ram"] = mem.percent
     last_metrics["ram_used_gb"] = round(mem.used / 1e9, 2)
     last_metrics["ram_total_gb"] = RAM_TOTAL_GB
+    sample_disk()
 
 
 def metrics_payload() -> dict:
@@ -363,6 +534,11 @@ def metrics_payload() -> dict:
         "ram": last_metrics["ram"],
         "ram_used_gb": last_metrics["ram_used_gb"],
         "ram_total_gb": last_metrics["ram_total_gb"],
+        "disk_percent": last_metrics["disk_percent"],
+        "disk_used_gb": last_metrics["disk_used_gb"],
+        "disk_free_gb": last_metrics["disk_free_gb"],
+        "disk_total_gb": last_metrics["disk_total_gb"],
+        "disk_path": last_metrics["disk_path"],
         "overloaded": resource_saturated,
         "cpu_high_streak": cpu_high_streak,
         "cpu_high_streak_required": CPU_HIGH_STREAK_REQUIRED,
@@ -393,6 +569,8 @@ def full_payload() -> dict:
         "containers": [{k: v for k, v in c.items() if k != "id"} for c in cached_containers],
         "suspended_count": len(suspended_containers),
         "logs": cached_tail_logs(40),
+        "auth_enabled": AUTH_ENABLED,
+        "email_enabled": EMAIL_ENABLED,
     })
     return payload
 
@@ -418,6 +596,7 @@ def publish_snapshot():
 async def refresh_containers_and_publish():
     global cached_containers
     cached_containers = await asyncio.to_thread(collect_container_info)
+    detect_status_transitions(cached_containers)
     publish_snapshot()
 
 
@@ -450,10 +629,8 @@ async def metrics_loop():
     await asyncio.sleep(1)
     while True:
         has_viewers = bool(subscribers)
-        # Host CPU/RAM via psutil is cheap and keeps the monitor accurate.
         sample_metrics()
         if has_viewers:
-            # Docker stats() is expensive — throttle and skip when nobody is watching.
             if _stats_tick % max(1, CONTAINER_STATS_EVERY) == 0:
                 usage = await asyncio.to_thread(sample_container_stats, list(cached_containers))
                 apply_usage(usage)
@@ -496,6 +673,7 @@ async def monitor_loop():
             logger.info(f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% ⚠️ OVERLOADED")
 
         containers = await asyncio.to_thread(collect_container_info)
+        detect_status_transitions(containers)
         mutated = False
 
         if overloaded:
@@ -529,6 +707,7 @@ async def monitor_loop():
 
         if mutated:
             containers = await asyncio.to_thread(collect_container_info)
+            detect_status_transitions(containers)
         cached_containers = containers
         publish_snapshot()
         await asyncio.sleep(max(5, CHECK_INTERVAL))
@@ -539,11 +718,21 @@ async def startup():
     global monitor_running, monitor_task, metrics_task
     global cached_containers
     load_state()
+    if not AUTH_ENABLED:
+        logger.warning("⚠️  AUTH_PASSWORD is empty — dashboard auth is DISABLED")
+    else:
+        logger.info(f"🔐 Auth enabled for user '{AUTH_USERNAME}'")
+    if EMAIL_ENABLED:
+        logger.info(f"📧 SMTP alerts enabled → {SMTP_TO} via {SMTP_HOST}:{SMTP_PORT}")
+    else:
+        logger.info("📧 SMTP alerts disabled (set SMTP_HOST and SMTP_TO in .env)")
     logger.info(
         f"🖥️  Server {SERVER_INFO['hostname']} ip={SERVER_INFO['ip']} "
         f"cpu={SERVER_INFO['cpu_cores']} ram={SERVER_INFO['ram_total_gb']}GB"
     )
+    sample_disk()
     cached_containers = await asyncio.to_thread(collect_container_info)
+    _prev_status.update({c["name"]: (c.get("status") or "").lower() for c in cached_containers})
     metrics_task = asyncio.create_task(metrics_loop())
     monitor_running = True
     monitor_task = asyncio.create_task(monitor_loop())
@@ -556,6 +745,43 @@ async def shutdown():
     for task in (monitor_task, metrics_task):
         if task:
             task.cancel()
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if _is_authed(request):
+        return RedirectResponse(url="/", status_code=303)
+    if not AUTH_ENABLED:
+        return RedirectResponse(url="/", status_code=303)
+    return _render_login()
+
+
+@app.post("/login")
+async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    if not AUTH_ENABLED:
+        return RedirectResponse(url="/", status_code=303)
+    # tiny delay to slow brute force
+    await asyncio.sleep(0.15)
+    if _verify_password(username.strip(), password):
+        request.session.clear()
+        request.session["authenticated"] = True
+        request.session["user"] = AUTH_USERNAME
+        request.session["csrf"] = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
+        logger.info(f"🔓 Login success for '{AUTH_USERNAME}' from {request.client.host if request.client else '?'}")
+        return RedirectResponse(url="/", status_code=303)
+    logger.warning(f"🔒 Login failed from {request.client.host if request.client else '?'}")
+    return _render_login("نام کاربری یا رمز عبور اشتباه است")
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=303)
 
 
 @app.get("/", response_class=HTMLResponse)

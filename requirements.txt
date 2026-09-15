@@ -3,3 +3,6 @@ uvicorn
 docker
 psutil
 pydantic
+python-dotenv
+python-multipart
+itsdangerous

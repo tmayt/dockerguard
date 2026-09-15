@@ -4,458 +4,343 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Docker Guardian</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg:       #080c14;
-    --surface:  #111827;
-    --surface-hover: #1f293d;
-    --border:   #1e2d45;
-    --accent:   #00d4aa;
-    --accent2:  #3b82f6;
-    --danger:   #ef4444;
-    --warn:     #f59e0b;
-    --ok:       #10b981;
-    --text:     #e2e8f0;
-    --muted:    #64748b;
-    --mono:     ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    --sans:     Tahoma, system-ui, sans-serif;
-    --shadow:   0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    --bg: #060a11;
+    --bg-glow: rgba(34, 197, 94, 0.08);
+    --surface: rgba(14, 22, 36, 0.88);
+    --surface-solid: #0e1624;
+    --surface-hover: #152033;
+    --border: #1c2b42;
+    --accent: #22c55e;
+    --accent2: #38bdf8;
+    --danger: #f87171;
+    --warn: #fbbf24;
+    --ok: #34d399;
+    --text: #e8eef8;
+    --muted: #7d8eaa;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "IBM Plex Sans Arabic", Tahoma, system-ui, sans-serif;
+    --radius: 16px;
+    --shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
-    background: var(--bg);
+    background:
+      radial-gradient(1000px 520px at 100% -5%, var(--bg-glow), transparent 55%),
+      radial-gradient(800px 420px at -5% 100%, rgba(56, 189, 248, 0.07), transparent 50%),
+      linear-gradient(180deg, #05080f 0%, #070b12 100%);
     color: var(--text);
     font-family: var(--sans);
     min-height: 100vh;
     overflow-x: hidden;
   }
 
-  /* ── Header ── */
   header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 32px;
+    gap: 14px;
+    padding: 14px 22px;
     border-bottom: 1px solid var(--border);
-    background: rgba(17, 24, 39, 0.92);
+    background: rgba(8, 12, 20, 0.85);
+    backdrop-filter: blur(14px);
     position: sticky;
     top: 0;
     z-index: 100;
-    box-shadow: var(--shadow);
   }
 
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-
+  .logo { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .logo-icon {
-    width: 40px; height: 40px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    width: 42px; height: 42px; flex-shrink: 0;
+    background: linear-gradient(145deg, #16a34a, #0ea5e9);
     border-radius: 12px;
-    display: grid;
-    place-items: center;
+    display: grid; place-items: center;
     font-size: 20px;
-    box-shadow: 0 0 15px rgba(0, 212, 170, 0.2);
+    box-shadow: 0 8px 22px rgba(34, 197, 94, 0.22);
   }
-
-  .logo-text { font-size: 19px; font-weight: 700; letter-spacing: -0.3px; color: #fff; }
-  .logo-sub  { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+  .logo-text { font-size: 17px; font-weight: 700; color: #fff; white-space: nowrap; }
+  .logo-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
 
   .server-strip {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 10px;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    margin: 0 20px;
-    min-width: 0;
+    display: flex; flex-wrap: wrap; gap: 8px;
+    align-items: center; justify-content: center;
+    flex: 1; min-width: 0;
   }
 
   .server-chip {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 5px 10px;
-    border-radius: 8px;
+    display: inline-flex; align-items: baseline; gap: 6px;
+    padding: 5px 10px; border-radius: 999px;
     border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.02);
-    font-size: 11px;
-    white-space: nowrap;
-    max-width: 100%;
+    background: rgba(255,255,255,0.02);
+    font-size: 11px; white-space: nowrap; max-width: 100%;
   }
-
   .server-chip .k {
-    color: var(--muted);
-    font-family: var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    font-size: 10px;
+    color: var(--muted); font-family: var(--mono);
+    text-transform: uppercase; letter-spacing: 0.5px; font-size: 9px;
   }
-
   .server-chip .v {
-    color: var(--text);
-    font-family: var(--mono);
-    font-weight: 600;
-    direction: ltr;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--text); font-family: var(--mono); font-weight: 600;
+    direction: ltr; overflow: hidden; text-overflow: ellipsis;
   }
-
   .server-chip .v.accent { color: var(--accent); }
 
-  .header-status {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    background: rgba(255, 255, 255, 0.02);
-    padding: 6px 14px;
-    border-radius: 99px;
-    border: 1px solid var(--border);
-    flex-shrink: 0;
+  .header-actions {
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
   }
-
-  @media (max-width: 1100px) {
-    header { flex-wrap: wrap; gap: 12px; }
-    .server-strip { order: 3; width: 100%; margin: 0; justify-content: flex-start; }
+  .header-status {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.02);
+    padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border);
   }
 
   .pulse {
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    background: var(--ok);
-    box-shadow: 0 0 10px var(--ok);
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--ok); box-shadow: 0 0 10px var(--ok);
     animation: pulse 2s infinite;
   }
   .pulse.danger { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
-  .pulse.warn   { background: var(--warn);   box-shadow: 0 0 10px var(--warn);   }
-  .pulse.off    { background: var(--muted);  box-shadow: none; animation: none; }
+  .pulse.warn   { background: var(--warn); box-shadow: 0 0 10px var(--warn); }
+  .pulse.off    { background: var(--muted); box-shadow: none; animation: none; }
 
   @keyframes pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
-    50%       { opacity: 0.3; transform: scale(0.9); }
+    50% { opacity: 0.35; transform: scale(0.9); }
   }
 
-  /* ── Layout ── */
-  .container { max-width: 1400px; margin: 0 auto; padding: 24px 32px; }
+  .container { max-width: 1440px; margin: 0 auto; padding: 20px 22px 40px; }
 
   .grid-top {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 20px;
-    margin-bottom: 24px;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 14px;
+    margin-bottom: 18px;
   }
 
   .grid-main {
     display: grid;
-    grid-template-columns: 1fr 380px;
-    gap: 24px;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 18px;
   }
 
-  /* ── Cards ── */
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 24px;
+    border-radius: var(--radius);
+    padding: 18px;
     box-shadow: var(--shadow);
-    transition: border-color 0.3s ease, box-shadow 0.3s ease;
-  }
-  .card:hover {
-    border-color: rgba(59, 130, 246, 0.3);
-    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(8px);
   }
 
   .card-title {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--muted);
-    margin-bottom: 16px;
-    font-weight: 600;
-    font-family: var(--mono);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px;
+    color: var(--muted); margin-bottom: 12px; font-weight: 600; font-family: var(--mono);
   }
 
-  /* ── Gauge cards ── */
   .gauge-card { text-align: center; }
-
   .gauge-val {
-    font-size: 44px;
-    font-weight: 700;
-    font-family: var(--mono);
-    line-height: 1;
-    margin-bottom: 6px;
-    transition: color 0.3s;
+    font-size: 36px; font-weight: 700; font-family: var(--mono);
+    line-height: 1; margin-bottom: 6px; transition: color 0.3s;
   }
-
-  .gauge-label { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+  .gauge-label { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
 
   .bar-track {
-    height: 8px;
-    background: rgba(30, 45, 69, 0.5);
-    border-radius: 99px;
-    overflow: hidden;
-    padding: 1px;
+    height: 7px; background: rgba(30, 45, 69, 0.55);
+    border-radius: 99px; overflow: hidden;
   }
-
   .bar-fill {
-    height: 100%;
-    border-radius: 99px;
-    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s;
+    height: 100%; border-radius: 99px;
+    transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s;
     background: var(--ok);
   }
-  .bar-fill.warn   { background: var(--warn); }
+  .bar-fill.warn { background: var(--warn); }
   .bar-fill.danger { background: var(--danger); }
 
-  /* ── Info cards ── */
   .stat-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 0;
-    border-bottom: 1px solid rgba(30, 45, 69, 0.5);
-    font-size: 13px;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 9px 0; border-bottom: 1px solid rgba(30, 45, 69, 0.45); font-size: 13px;
   }
   .stat-row:last-child { border-bottom: none; padding-bottom: 0; }
   .stat-row:first-child { padding-top: 0; }
   .stat-key { color: var(--muted); }
   .stat-val { font-family: var(--mono); font-weight: 600; }
 
-  /* ── Buttons ── */
   .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 10px 20px;
-    border-radius: 10px;
-    border: none;
-    cursor: pointer;
-    font-size: 13px;
-    font-family: var(--sans);
-    font-weight: 600;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 10px 16px; border-radius: 10px; border: none; cursor: pointer;
+    font-size: 13px; font-family: var(--sans); font-weight: 600;
+    transition: transform 0.15s, opacity 0.2s, background 0.2s;
   }
-  .btn:hover:not(:disabled)   { opacity: 0.9; transform: translateY(-1px); }
-  .btn:active:not(:disabled)  { transform: translateY(1px); }
-  .btn:disabled {
-    opacity: 0.4 !important;
-    cursor: not-allowed !important;
-    transform: none !important;
-  }
-  .btn-accent  { background: var(--accent);  color: #040811; box-shadow: 0 4px 12px rgba(0, 212, 170, 0.15); }
-  .btn-danger  { background: var(--danger);  color: #fff; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15); }
-  .btn-ok      { background: var(--ok);      color: #040811; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15); }
-  .btn-ghost   { background: var(--border);  color: var(--text); }
-  .btn-sm      { padding: 6px 12px; font-size: 12px; border-radius: 6px; }
+  .btn:hover:not(:disabled) { opacity: 0.92; transform: translateY(-1px); }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; transform: none !important; }
+  .btn-accent { background: var(--accent); color: #04110a; }
+  .btn-danger { background: var(--danger); color: #1a0505; }
+  .btn-ok { background: var(--ok); color: #04110a; }
+  .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
 
-  /* ── Containers table ── */
+  .section-head {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    margin-bottom: 14px;
+  }
   .section-title {
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    font-size: 15px; font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
   }
-
   .badge {
-    font-size: 11px;
-    font-family: var(--mono);
-    padding: 2px 8px;
-    border-radius: 99px;
-    background: var(--border);
-    color: var(--accent);
-    font-weight: 600;
+    font-size: 11px; font-family: var(--mono); padding: 2px 8px;
+    border-radius: 99px; background: var(--border); color: var(--accent); font-weight: 600;
   }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .sort-bar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    margin-right: auto;
+  }
+  .sort-bar label { font-size: 12px; color: var(--muted); }
+  .sort-select, .sort-dir {
+    appearance: none;
+    background: #0a1220;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-family: var(--sans);
+    font-size: 12px;
+    outline: none;
+  }
+  .sort-select:focus, .sort-dir:focus { border-color: var(--accent); }
 
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 640px; }
   th {
-    text-align: right;
-    padding: 12px;
-    color: var(--muted);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    border-bottom: 2px solid var(--border);
-    font-weight: 600;
+    text-align: right; padding: 10px 12px; color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+    border-bottom: 1px solid var(--border); font-weight: 600; white-space: nowrap;
   }
-
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--accent); }
+  th .sort-ind { font-family: var(--mono); margin-right: 4px; opacity: 0.7; }
   td {
-    padding: 14px 12px;
-    border-bottom: 1px solid rgba(30, 45, 69, 0.4);
+    padding: 12px; border-bottom: 1px solid rgba(30, 45, 69, 0.35);
     vertical-align: middle;
-    transition: background-color 0.2s;
   }
-
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: rgba(255,255,255,0.015); }
 
   .status-dot {
-    display: inline-block;
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    margin-left: 8px;
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-left: 8px;
   }
-  .dot-running  { background: var(--ok);     box-shadow: 0 0 8px var(--ok); }
-  .dot-exited   { background: var(--muted); }
-  .dot-stopped  { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  .dot-running { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot-exited { background: var(--muted); }
+  .dot-stopped { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
   .use-cell {
-    font-family: var(--mono);
-    font-size: 12px;
-    white-space: nowrap;
-    direction: ltr;
-    text-align: left;
+    font-family: var(--mono); font-size: 12px;
+    white-space: nowrap; direction: ltr; text-align: left;
   }
   .use-cpu { font-weight: 600; }
   .use-ram { color: var(--muted); margin-top: 2px; }
 
-  .priority-wrap {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
+  .priority-wrap { display: flex; align-items: center; gap: 8px; }
   .priority-input {
-    width: 64px;
-    padding: 6px 8px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: #0b1220;
-    color: var(--accent);
-    font-family: var(--mono);
-    font-size: 13px;
-    font-weight: 600;
-    text-align: center;
-    outline: none;
+    width: 64px; padding: 6px 8px; border-radius: 8px;
+    border: 1px solid var(--border); background: #0b1220;
+    color: var(--accent); font-family: var(--mono); font-size: 13px;
+    font-weight: 600; text-align: center; outline: none;
   }
-  .priority-input:focus {
-    border-color: var(--accent);
-  }
-  .priority-input:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
+  .priority-input:focus { border-color: var(--accent); }
+  .priority-input:disabled { opacity: 0.35; cursor: not-allowed; }
 
   input[type=range] {
-    -webkit-appearance: none;
-    width: 90px;
-    height: 6px;
-    border-radius: 99px;
-    background: var(--border);
-    outline: none;
-    cursor: pointer;
-    transition: opacity 0.2s;
-  }
-  input[type=range]:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
+    -webkit-appearance: none; width: 100%; height: 6px;
+    border-radius: 99px; background: var(--border); outline: none; cursor: pointer;
   }
   input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 14px; height: 14px;
-    border-radius: 50%;
-    background: var(--accent);
-    cursor: pointer;
-    box-shadow: 0 0 5px rgba(0,0,0,0.5);
-    transition: transform 0.1s;
-  }
-  input[type=range]:not(:disabled)::-webkit-slider-thumb:hover {
-    transform: scale(1.2);
+    -webkit-appearance: none; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--accent); cursor: pointer;
   }
 
-  /* ── Right panel ── */
-  .right-panel { display: flex; flex-direction: column; gap: 20px; }
+  .right-panel { display: flex; flex-direction: column; gap: 14px; }
 
-  /* Thresholds */
-  .thresh-group { margin-bottom: 18px; }
+  .thresh-group { margin-bottom: 14px; }
   .thresh-label {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 8px;
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--muted); margin-bottom: 8px;
   }
   .thresh-label span:last-child {
-    font-family: var(--mono);
-    color: var(--text);
-    font-weight: 600;
+    font-family: var(--mono); color: var(--text); font-weight: 600;
   }
-  input[type=range].thresh { width: 100%; }
 
-  /* ── Log panel ── */
   .log-box {
-    background: #05070f;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-    font-family: var(--mono);
-    font-size: 12px;
-    line-height: 1.8;
-    height: 280px;
-    overflow-y: auto;
-    color: #94a3b8;
-    box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+    background: #05070f; border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px; font-family: var(--mono); font-size: 11px; line-height: 1.7;
+    height: 260px; overflow-y: auto; color: #94a3b8;
   }
+  .log-line { white-space: pre-wrap; word-break: break-all; margin-bottom: 3px; padding-right: 6px; border-right: 2px solid transparent; }
+  .log-line.warn { color: var(--warn); border-right-color: var(--warn); }
+  .log-line.error { color: var(--danger); border-right-color: var(--danger); }
+  .log-line.ok { color: var(--ok); border-right-color: var(--ok); }
+  .log-line.info { color: #64748b; }
 
-  .log-line { white-space: pre-wrap; word-break: break-all; margin-bottom: 4px; padding-left: 4px; border-left: 2px solid transparent;}
-  .log-line.warn    { color: var(--warn); border-left-color: var(--warn); }
-  .log-line.error   { color: var(--danger); border-left-color: var(--danger); }
-  .log-line.ok      { color: var(--ok); border-left-color: var(--ok); }
-  .log-line.info    { color: #64748b; }
+  .monitor-btn { width: 100%; padding: 12px; font-size: 14px; }
 
-  /* ── Monitor toggle ── */
-  .monitor-btn {
-    width: 100%;
-    padding: 12px;
-    font-size: 14px;
-  }
-
-  /* ── Suspended banner ── */
   .suspended-banner {
-    background: rgba(239, 68, 68, 0.06);
-    border: 1px solid rgba(239, 68, 68, 0.25);
-    border-radius: 12px;
-    padding: 14px 20px;
-    font-size: 13px;
-    color: #fca5a5;
-    font-weight: 500;
-    display: none;
-    animation: fadeIn 0.3s ease;
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.05);
+    background: rgba(248, 113, 113, 0.08);
+    border: 1px solid rgba(248, 113, 113, 0.25);
+    border-radius: 12px; padding: 12px 16px; font-size: 13px;
+    color: #fecaca; display: none; margin-bottom: 14px;
   }
   .suspended-banner.visible { display: block; }
 
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-4px); }
-    to { opacity: 1; transform: translateY(0); }
+  .empty { text-align: center; padding: 40px; color: var(--muted); font-size: 14px; }
+  .tag-suspended {
+    font-size: 10px; font-family: var(--mono);
+    background: rgba(248, 113, 113, 0.15); color: #fecaca;
+    padding: 2px 6px; border-radius: 4px; margin-left: 6px; font-weight: 600;
   }
 
-  /* ── Scrollbar ── */
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: #122033; border: 1px solid var(--border); color: var(--text);
+    padding: 10px 16px; border-radius: 999px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: all 0.25s ease; z-index: 200;
+    box-shadow: var(--shadow);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.ok { border-color: rgba(52, 211, 153, 0.4); }
+  .toast.err { border-color: rgba(248, 113, 113, 0.4); }
+
   ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
-  /* ── Empty state ── */
-  .empty { text-align: center; padding: 48px; color: var(--muted); font-size: 14px; }
-
-  .tag-suspended {
-    font-size: 10px;
-    font-family: var(--mono);
-    background: rgba(239, 68, 68, 0.15);
-    color: #fca5a5;
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: 6px;
-    font-weight: 600;
-    border: 1px solid rgba(239, 68, 68, 0.2);
+  @media (max-width: 1200px) {
+    .grid-top { grid-template-columns: repeat(3, 1fr); }
+    .grid-main { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 900px) {
+    header { flex-wrap: wrap; padding: 12px 14px; }
+    .server-strip { order: 3; width: 100%; justify-content: flex-start; }
+    .logo-sub { display: none; }
+    .container { padding: 14px 12px 32px; }
+    .grid-top { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .gauge-val { font-size: 28px; }
+    .card { padding: 14px; border-radius: 14px; }
+    .sort-bar { width: 100%; margin-right: 0; }
+    #hdr-text { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  }
+  @media (max-width: 520px) {
+    .grid-top { grid-template-columns: 1fr 1fr; }
+    .header-status { padding: 6px 8px; }
+    .btn-logout span { display: none; }
   }
 </style>
 </head>
@@ -473,13 +358,15 @@
     <div class="server-chip"><span class="k">IP</span><span class="v accent" id="srv-ip">—</span></div>
     <div class="server-chip"><span class="k">Host</span><span class="v" id="srv-host">—</span></div>
     <div class="server-chip"><span class="k">OS</span><span class="v" id="srv-os">—</span></div>
-    <div class="server-chip"><span class="k">CPU</span><span class="v" id="srv-cpu">—</span></div>
-    <div class="server-chip"><span class="k">RAM</span><span class="v" id="srv-ram">—</span></div>
+    <div class="server-chip"><span class="k">Disk free</span><span class="v" id="srv-disk">—</span></div>
     <div class="server-chip"><span class="k">Uptime</span><span class="v" id="srv-uptime">—</span></div>
   </div>
-  <div class="header-status">
-    <span id="hdr-text" style="font-size:13px;color:var(--muted)">در حال بارگذاری...</span>
-    <div class="pulse off" id="hdr-pulse"></div>
+  <div class="header-actions">
+    <div class="header-status">
+      <span id="hdr-text" style="font-size:12px;color:var(--muted)">در حال بارگذاری...</span>
+      <div class="pulse off" id="hdr-pulse"></div>
+    </div>
+    <a class="btn btn-ghost btn-sm btn-logout" href="/logout" title="خروج">⎋ <span>خروج</span></a>
   </div>
 </header>
 
@@ -500,9 +387,15 @@
     </div>
     <div class="card gauge-card">
       <div class="card-title">حافظه</div>
-      <div class="gauge-val" id="ram-gb" style="font-size:26px;color:var(--accent2)">— GB</div>
+      <div class="gauge-val" id="ram-gb" style="font-size:24px;color:var(--accent2)">— GB</div>
       <div class="gauge-label" id="ram-total">از — GB</div>
       <div class="bar-track"><div class="bar-fill" id="ram-gb-bar" style="width:0%;background:var(--accent2)"></div></div>
+    </div>
+    <div class="card gauge-card">
+      <div class="card-title">دیسک</div>
+      <div class="gauge-val" id="disk-val" style="color:var(--accent2)">—</div>
+      <div class="gauge-label" id="disk-label">آزاد — از —</div>
+      <div class="bar-track"><div class="bar-fill" id="disk-bar" style="width:0%;background:var(--accent2)"></div></div>
     </div>
     <div class="card">
       <div class="card-title">وضعیت کلی</div>
@@ -515,28 +408,41 @@
         <span class="stat-val" id="monitor-status">—</span>
       </div>
       <div class="stat-row">
-        <span class="stat-key">متوقف‌شده</span>
-        <span class="stat-val" id="suspended-cnt">—</span>
+        <span class="stat-key">ایمیل</span>
+        <span class="stat-val" id="email-status">—</span>
       </div>
       <div class="stat-row">
-        <span class="stat-key">کانتینرها</span>
-        <span class="stat-val" id="container-cnt">—</span>
+        <span class="stat-key">متوقف‌شده</span>
+        <span class="stat-val" id="suspended-cnt">—</span>
       </div>
     </div>
   </div>
 
   <div class="suspended-banner" id="suspended-banner">
-    ⚠️ منابع سرور اشباع شده — کانتینرهای کم‌اولویت متوقف شده‌اند
+    منابع سرور اشباع شده — کانتینرهای کم‌اولویت متوقف شده‌اند
   </div>
 
-  <div id="suspended-spacer" style="height:0"></div>
-
-  <div class="grid-main" style="margin-top:20px">
-
+  <div class="grid-main">
     <div class="card">
-      <div class="section-title">
-        🐳 کانتینرهای Docker
-        <span class="badge" id="cnt-badge">0</span>
+      <div class="section-head">
+        <div class="section-title">
+          کانتینرهای Docker
+          <span class="badge" id="cnt-badge">0</span>
+        </div>
+        <div class="sort-bar">
+          <label for="sort-by">مرتب‌سازی</label>
+          <select id="sort-by" class="sort-select" onchange="onSortChange()">
+            <option value="name">نام</option>
+            <option value="priority">اولویت</option>
+            <option value="cpu">مصرف CPU</option>
+            <option value="ram">مصرف RAM</option>
+            <option value="status">وضعیت</option>
+          </select>
+          <select id="sort-dir" class="sort-dir" onchange="onSortChange()">
+            <option value="desc">نزولی</option>
+            <option value="asc">صعودی</option>
+          </select>
+        </div>
       </div>
       <div id="containers-wrap">
         <div class="empty">در حال دریافت اطلاعات...</div>
@@ -544,63 +450,59 @@
     </div>
 
     <div class="right-panel">
-
       <div class="card">
         <div class="card-title">کنترل مانیتور</div>
         <button class="btn monitor-btn btn-ok" id="toggle-btn" onclick="toggleMonitor()">
-          ⏸ توقف مانیتور
+          توقف مانیتور
         </button>
       </div>
 
       <div class="card">
         <div class="card-title">آستانه‌های هشدار</div>
-
         <div class="thresh-group">
           <div class="thresh-label">
             <span>CPU حداکثر</span>
             <span id="cpu-thresh-label">80%</span>
           </div>
-          <input type="range" class="thresh" min="10" max="99" value="80" id="cpu-thresh" 
+          <input type="range" class="thresh" min="10" max="99" value="80" id="cpu-thresh"
                  oninput="document.getElementById('cpu-thresh-label').textContent=this.value+'%'">
         </div>
-
         <div class="thresh-group">
           <div class="thresh-label">
             <span>RAM حداکثر</span>
             <span id="ram-thresh-label">80%</span>
           </div>
-          <input type="range" class="thresh" min="10" max="99" value="80" id="ram-thresh" 
+          <input type="range" class="thresh" min="10" max="99" value="80" id="ram-thresh"
                  oninput="document.getElementById('ram-thresh-label').textContent=this.value+'%'">
         </div>
-
         <div class="thresh-group">
           <div class="thresh-label">
             <span>بازه بررسی</span>
             <span id="interval-label">10s</span>
           </div>
-          <input type="range" class="thresh" min="5" max="120" value="10" id="interval-thresh" 
+          <input type="range" class="thresh" min="5" max="120" value="10" id="interval-thresh"
                  oninput="document.getElementById('interval-label').textContent=this.value+'s'">
         </div>
-
         <button id="save-thresh-btn" class="btn btn-accent" style="width:100%;justify-content:center;margin-top:4px"
                 onclick="saveThresholds()">
-          💾 ذخیره تنظیمات
+          ذخیره تنظیمات
         </button>
       </div>
 
       <div class="card">
-        <div class="section-title">
-          📋 لاگ‌های سیستم
+        <div class="section-head">
+          <div class="section-title">لاگ‌های سیستم</div>
           <button id="refresh-logs-btn" class="btn btn-ghost btn-sm" onclick="loadLogs(true)" style="margin-right:auto">
-            🔄 به‌روز
+            به‌روز
           </button>
         </div>
         <div class="log-box" id="log-box">در حال بارگذاری...</div>
       </div>
-
     </div>
   </div>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <script>
 let monitorRunning = true;
@@ -608,25 +510,43 @@ let eventSource = null;
 let pollTimer = null;
 let containersFingerprint = '';
 let lastUsage = {};
+let lastContainers = [];
+let sortBy = localStorage.getItem('dg_sort_by') || 'priority';
+let sortDir = localStorage.getItem('dg_sort_dir') || 'desc';
+
+(function initSortControls() {
+  const by = document.getElementById('sort-by');
+  const dir = document.getElementById('sort-dir');
+  if (by) by.value = sortBy;
+  if (dir) dir.value = sortDir;
+})();
+
+function showToast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => { t.className = 'toast'; }, 2200);
+}
 
 function setElementLoading(elementId, isLoading, loadingText = null) {
   const el = document.getElementById(elementId);
   if (!el) return;
-  if (loadingText) {
-    if (isLoading) {
+  if (isLoading) {
+    if (loadingText != null) {
       if (!el.dataset.originalText) el.dataset.originalText = el.innerHTML;
       el.innerHTML = loadingText;
-    } else if (el.dataset.originalText) {
-      el.innerHTML = el.dataset.originalText;
-      delete el.dataset.originalText;
     }
+  } else if (el.dataset.originalText) {
+    el.innerHTML = el.dataset.originalText;
+    delete el.dataset.originalText;
   }
-  el.disabled = isLoading;
+  el.disabled = !!isLoading;
 }
 
 function setTableActionsLoading(isLoading) {
-  const elements = document.querySelectorAll('#containers-wrap button, #containers-wrap input.priority-input');
-  elements.forEach(el => el.disabled = isLoading);
+  document.querySelectorAll('#containers-wrap button, #containers-wrap input.priority-input')
+    .forEach(el => { el.disabled = isLoading; });
 }
 
 function escapeHtml(value) {
@@ -638,6 +558,7 @@ function escapeHtml(value) {
 async function fetchStatus() {
   try {
     const r = await fetch('/api/status');
+    if (r.status === 401) { location.href = '/login'; return; }
     const d = await r.json();
     updateDashboard(d);
   } catch (e) {
@@ -664,25 +585,38 @@ function applyServerInfo(s) {
     osEl.textContent = s.os;
     osEl.title = [s.os, s.kernel, s.arch].filter(Boolean).join(' · ');
   }
-  if (s.cpu_cores != null) document.getElementById('srv-cpu').textContent = s.cpu_cores + ' cores';
-  if (s.ram_total_gb != null) document.getElementById('srv-ram').textContent = s.ram_total_gb + ' GB';
   if (s.uptime_sec != null) document.getElementById('srv-uptime').textContent = formatUptime(s.uptime_sec);
 }
 
 function colorFor(val, warn=70, danger=85) {
   if (val >= danger) return 'var(--danger)';
-  if (val >= warn)   return 'var(--warn)';
+  if (val >= warn) return 'var(--warn)';
   return 'var(--ok)';
 }
 
 function classFor(val, warn=70, danger=85) {
   if (val >= danger) return 'danger';
-  if (val >= warn)   return 'warn';
+  if (val >= warn) return 'warn';
   return '';
+}
+
+function applyDisk(d) {
+  if (d.disk_percent == null) return;
+  const pct = Number(d.disk_percent || 0);
+  document.getElementById('disk-val').textContent = pct.toFixed(1) + '%';
+  document.getElementById('disk-val').style.color = colorFor(pct, 75, 90);
+  document.getElementById('disk-label').textContent =
+    `آزاد ${d.disk_free_gb ?? '—'} GB از ${d.disk_total_gb ?? '—'} GB`;
+  const bar = document.getElementById('disk-bar');
+  bar.style.width = pct + '%';
+  bar.className = 'bar-fill ' + classFor(pct, 75, 90);
+  const chip = document.getElementById('srv-disk');
+  if (chip) chip.textContent = `${d.disk_free_gb ?? '—'} GB free`;
 }
 
 function applyMetrics(d) {
   if (d.server) applyServerInfo(d.server);
+  applyDisk(d);
 
   const cpu = Number(d.cpu || 0).toFixed(1);
   const ram = Number(d.ram || 0).toFixed(1);
@@ -703,12 +637,17 @@ function applyMetrics(d) {
   if (d.ram_total_gb != null) document.getElementById('ram-total').textContent = 'از ' + d.ram_total_gb + ' GB';
   document.getElementById('ram-gb-bar').style.width = ram + '%';
 
+  if (d.email_enabled != null) {
+    document.getElementById('email-status').textContent = d.email_enabled ? 'فعال' : 'خاموش';
+    document.getElementById('email-status').style.color = d.email_enabled ? 'var(--ok)' : 'var(--muted)';
+  }
+
   if (d.monitor_running != null) {
-    document.getElementById('monitor-status').textContent = d.monitor_running ? '▶️ فعال' : '⏸ متوقف';
+    document.getElementById('monitor-status').textContent = d.monitor_running ? 'فعال' : 'متوقف';
     monitorRunning = d.monitor_running;
     const toggleBtn = document.getElementById('toggle-btn');
     if (!toggleBtn.disabled) {
-      toggleBtn.textContent = monitorRunning ? '⏸ توقف مانیتور' : '▶️ شروع مانیتور';
+      toggleBtn.textContent = monitorRunning ? 'توقف مانیتور' : 'شروع مانیتور';
       toggleBtn.className = 'btn monitor-btn ' + (monitorRunning ? 'btn-danger' : 'btn-ok');
     }
   }
@@ -721,19 +660,28 @@ function applyMetrics(d) {
     : (d.monitor_running ? '' : 'off'))
   );
   if (d.overloaded) {
-    hdrText.textContent = '⚠️ منابع اشباع';
+    hdrText.textContent = 'منابع اشباع';
     hdrText.style.color = 'var(--danger)';
   } else if (d.cpu_high_streak > 0) {
-    hdrText.textContent = `⚠️ CPU بالا ${d.cpu_high_streak}/${d.cpu_high_streak_required} بازه`;
+    hdrText.textContent = `CPU بالا ${d.cpu_high_streak}/${d.cpu_high_streak_required}`;
     hdrText.style.color = 'var(--warn)';
   } else {
-    hdrText.textContent = d.monitor_running ? '✅ وضعیت نرمال' : '⏸ مانیتور متوقف';
+    hdrText.textContent = d.monitor_running ? 'وضعیت نرمال' : 'مانیتور متوقف';
     hdrText.style.color = d.monitor_running ? 'var(--ok)' : 'var(--muted)';
   }
 
   if (d.usage) {
     lastUsage = d.usage;
-    updateUsage(d.usage);
+    // merge into lastContainers for live re-sort
+    lastContainers = lastContainers.map(c => {
+      const u = d.usage[c.name] || {};
+      return { ...c, cpu: u.cpu, ram_mb: u.ram_mb };
+    });
+    if (sortBy === 'cpu' || sortBy === 'ram') {
+      renderContainers(lastContainers, true);
+    } else {
+      updateUsage(d.usage);
+    }
   }
 }
 
@@ -741,20 +689,14 @@ function updateDashboard(d) {
   applyMetrics(d);
 
   if (d.docker_available != null) {
-    document.getElementById('docker-status').textContent = d.docker_available ? '✅ متصل' : '⚠️ Demo';
+    document.getElementById('docker-status').textContent = d.docker_available ? 'متصل' : 'Demo';
     document.getElementById('docker-status').style.color = d.docker_available ? 'var(--ok)' : 'var(--warn)';
   }
   if (d.suspended_count != null) document.getElementById('suspended-cnt').textContent = d.suspended_count;
-  if (d.containers) document.getElementById('container-cnt').textContent = d.containers.length;
 
   const banner = document.getElementById('suspended-banner');
-  if (d.overloaded || d.suspended_count > 0) {
-    banner.classList.add('visible');
-    document.getElementById('suspended-spacer').style.height = '16px';
-  } else {
-    banner.classList.remove('visible');
-    document.getElementById('suspended-spacer').style.height = '0';
-  }
+  if (d.overloaded || d.suspended_count > 0) banner.classList.add('visible');
+  else banner.classList.remove('visible');
 
   if (d.thresholds && !window._threshLoaded) {
     window._threshLoaded = true;
@@ -770,8 +712,8 @@ function updateDashboard(d) {
   if (d.containers) {
     document.getElementById('cnt-badge').textContent = d.containers.length;
     lastUsage = Object.fromEntries(d.containers.map(c => [c.name, {cpu: c.cpu, ram_mb: c.ram_mb}]));
-    renderContainers(d.containers);
-    updateUsage(lastUsage);
+    lastContainers = d.containers.slice();
+    renderContainers(lastContainers);
   }
   if (d.logs) renderLogLines(d.logs);
 }
@@ -801,41 +743,71 @@ function updateUsage(usage) {
   });
 }
 
-function renderContainers(list) {
+function sortedContainers(list) {
+  const dir = sortDir === 'asc' ? 1 : -1;
+  const arr = list.slice();
+  const num = (v) => (v == null || Number.isNaN(Number(v)) ? -1 : Number(v));
+  arr.sort((a, b) => {
+    let cmp = 0;
+    if (sortBy === 'priority') cmp = num(a.priority) - num(b.priority);
+    else if (sortBy === 'cpu') cmp = num(a.cpu) - num(b.cpu);
+    else if (sortBy === 'ram') cmp = num(a.ram_mb) - num(b.ram_mb);
+    else if (sortBy === 'status') cmp = String(a.status || '').localeCompare(String(b.status || ''));
+    else cmp = String(a.name || '').localeCompare(String(b.name || ''), 'fa');
+    if (cmp === 0) cmp = String(a.name || '').localeCompare(String(b.name || ''), 'fa');
+    return cmp * dir;
+  });
+  return arr;
+}
+
+function onSortChange() {
+  sortBy = document.getElementById('sort-by').value;
+  sortDir = document.getElementById('sort-dir').value;
+  localStorage.setItem('dg_sort_by', sortBy);
+  localStorage.setItem('dg_sort_dir', sortDir);
+  containersFingerprint = '';
+  renderContainers(lastContainers, true);
+}
+
+function renderContainers(list, force = false) {
   const wrap = document.getElementById('containers-wrap');
   if (document.activeElement && document.activeElement.classList.contains('priority-input')) {
     updateUsage(lastUsage);
     return;
   }
-  const fp = list.map(c =>
-    [c.name, c.status, Number(c.priority), c.suspended_by_guardian ? 1 : 0, c.image].join('|')
-  ).join(';');
-  if (fp === containersFingerprint) {
+  const sorted = sortedContainers(list || []);
+  const fp = sorted.map(c =>
+    [c.name, c.status, Number(c.priority), c.suspended_by_guardian ? 1 : 0, c.image, sortBy, sortDir].join('|')
+  ).join(';') + '|' + (sortBy === 'cpu' || sortBy === 'ram'
+    ? sorted.map(c => `${c.name}:${c.cpu}:${c.ram_mb}`).join(',')
+    : '');
+  if (!force && fp === containersFingerprint) {
     updateUsage(lastUsage);
     return;
   }
   containersFingerprint = fp;
 
-  if (!list.length) {
+  if (!sorted.length) {
     wrap.innerHTML = '<div class="empty">هیچ کانتینری یافت نشد</div>';
     return;
   }
 
-  const rows = list.map(c => {
-    const dotClass = {running:'dot-running', exited:'dot-exited', stopped:'dot-stopped', paused:'dot-paused'}[c.status] || 'dot-exited';
+  const arrow = (key) => sortBy === key ? (sortDir === 'asc' ? '↑' : '↓') : '';
+
+  const rows = sorted.map(c => {
+    const dotClass = {running:'dot-running', exited:'dot-exited', stopped:'dot-stopped'}[c.status] || 'dot-exited';
     const name = escapeHtml(c.name);
     const image = escapeHtml(c.image);
     const priority = Number.parseInt(c.priority, 10) || 5;
     const nameCell = `
-      <div style="display:flex; align-items:center;">
+      <div style="display:flex;align-items:center;gap:6px;">
         ${c.suspended_by_guardian ? '<span class="tag-suspended">guardian</span>' : ''}
         <div>
           <strong>${name}</strong>
           <br><span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${image}</span>
         </div>
-      </div>
-    `;
-    const statusCell = `<span class="status-dot ${dotClass}"></span> ${escapeHtml(c.status)}`;
+      </div>`;
+    const statusCell = `<span class="status-dot ${dotClass}"></span>${escapeHtml(c.status)}`;
     const useCell = `
       <div class="use-cell">
         <div class="use-cpu">${formatCpu(c.cpu)}</div>
@@ -847,22 +819,24 @@ function renderContainers(list) {
                value="${priority}" data-name="${name}">
       </div>`;
     const actCell = c.status === 'running'
-      ? `<button class="btn btn-danger btn-sm" data-action="stop" data-name="${name}">⏹ توقف</button>`
-      : `<button class="btn btn-ok btn-sm" data-action="start" data-name="${name}">▶️ شروع</button>`;
+      ? `<button class="btn btn-danger btn-sm" data-action="stop" data-name="${name}">توقف</button>`
+      : `<button class="btn btn-ok btn-sm" data-action="start" data-name="${name}">شروع</button>`;
     return `<tr data-name="${name}"><td>${nameCell}</td><td>${statusCell}</td><td>${useCell}</td><td>${prioCell}</td><td>${actCell}</td></tr>`;
   }).join('');
 
   wrap.innerHTML = `
-    <table>
-      <thead><tr>
-        <th>نام / تصویر</th>
-        <th>وضعیت</th>
-        <th>مصرف لحظه‌ای</th>
-        <th>اولویت (۱=پایین)</th>
-        <th>عملیات</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th class="sortable" data-sort="name">نام / تصویر <span class="sort-ind">${arrow('name')}</span></th>
+          <th class="sortable" data-sort="status">وضعیت <span class="sort-ind">${arrow('status')}</span></th>
+          <th class="sortable" data-sort="cpu">مصرف لحظه‌ای <span class="sort-ind">${arrow('cpu') || arrow('ram')}</span></th>
+          <th class="sortable" data-sort="priority">اولویت (۱=پایین) <span class="sort-ind">${arrow('priority')}</span></th>
+          <th>عملیات</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 document.getElementById('containers-wrap').addEventListener('change', (e) => {
@@ -872,6 +846,16 @@ document.getElementById('containers-wrap').addEventListener('change', (e) => {
 });
 
 document.getElementById('containers-wrap').addEventListener('click', (e) => {
+  const th = e.target.closest('th.sortable');
+  if (th) {
+    const key = th.dataset.sort;
+    if (sortBy === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    else { sortBy = key; sortDir = key === 'name' || key === 'status' ? 'asc' : 'desc'; }
+    document.getElementById('sort-by').value = sortBy;
+    document.getElementById('sort-dir').value = sortDir;
+    onSortChange();
+    return;
+  }
   const btn = e.target.closest('[data-action]');
   if (btn) containerAction(btn, btn.dataset.name, btn.dataset.action);
 });
@@ -884,13 +868,18 @@ async function setPriority(name, val, inputEl) {
   }
   if (inputEl) inputEl.disabled = true;
   try {
-    await fetch('/api/priority', {
+    const r = await fetch('/api/priority', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({container_name: name, priority})
     });
+    if (!r.ok) throw new Error('failed');
+    const item = lastContainers.find(c => c.name === name);
+    if (item) item.priority = priority;
+    showToast('اولویت ذخیره شد');
   } catch (e) {
     console.error(e);
+    showToast('خطا در ذخیره اولویت', false);
   } finally {
     if (inputEl) inputEl.disabled = false;
   }
@@ -899,7 +888,7 @@ async function setPriority(name, val, inputEl) {
 async function containerAction(btnElement, name, action) {
   setTableActionsLoading(true);
   const originalText = btnElement.innerHTML;
-  btnElement.innerHTML = '⏳ ...';
+  btnElement.innerHTML = '...';
   try {
     await fetch(`/api/container/${encodeURIComponent(name)}/${action}`, {method:'POST'});
   } catch (e) {
@@ -911,7 +900,7 @@ async function containerAction(btnElement, name, action) {
 }
 
 async function toggleMonitor() {
-  setElementLoading('toggle-btn', true, '⏳ در حال تغییر...');
+  setElementLoading('toggle-btn', true, 'در حال تغییر...');
   try {
     const r = await fetch('/api/monitor/toggle');
     const d = await r.json();
@@ -924,19 +913,29 @@ async function toggleMonitor() {
 }
 
 async function saveThresholds() {
-  setElementLoading('save-thresh-btn', true, '⏳ در حال ذخیره...');
-  const cpu      = Number.parseFloat(document.getElementById('cpu-thresh').value);
-  const ram      = Number.parseFloat(document.getElementById('ram-thresh').value);
+  setElementLoading('save-thresh-btn', true, 'در حال ذخیره...');
+  const cpu = Number.parseFloat(document.getElementById('cpu-thresh').value);
+  const ram = Number.parseFloat(document.getElementById('ram-thresh').value);
   const interval = Number.parseInt(document.getElementById('interval-thresh').value, 10);
   try {
-    await fetch('/api/thresholds', {
+    const r = await fetch('/api/thresholds', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({cpu, ram, interval})
     });
-    window._threshLoaded = false;
+    if (!r.ok) throw new Error('save failed');
+    const d = await r.json();
+    window._threshLoaded = true;
+    document.getElementById('cpu-thresh').value = d.cpu;
+    document.getElementById('cpu-thresh-label').textContent = d.cpu + '%';
+    document.getElementById('ram-thresh').value = d.ram;
+    document.getElementById('ram-thresh-label').textContent = d.ram + '%';
+    document.getElementById('interval-thresh').value = d.interval;
+    document.getElementById('interval-label').textContent = d.interval + 's';
+    showToast('تنظیمات ذخیره شد');
   } catch (e) {
     console.error(e);
+    showToast('خطا در ذخیره تنظیمات', false);
   } finally {
     setElementLoading('save-thresh-btn', false);
   }
@@ -945,7 +944,7 @@ async function saveThresholds() {
 function logClass(line) {
   if (/ERROR|error/.test(line)) return 'error';
   if (/WARNING|warn|WARN|⚠️|🔴/.test(line)) return 'warn';
-  if (/✅|▶️|🟢|INFO.*OK/.test(line)) return 'ok';
+  if (/✅|▶️|🟢|INFO.*OK|📧/.test(line)) return 'ok';
   return 'info';
 }
 
@@ -958,7 +957,7 @@ function renderLogLines(lines) {
 }
 
 async function loadLogs(showLoading = false) {
-  if (showLoading) setElementLoading('refresh-logs-btn', true, '🔄 ...');
+  if (showLoading) setElementLoading('refresh-logs-btn', true, '...');
   try {
     const r = await fetch('/api/logs?lines=50');
     const d = await r.json();
@@ -971,14 +970,8 @@ async function loadLogs(showLoading = false) {
 }
 
 function stopLiveUpdates() {
-  if (eventSource) {
-    eventSource.close();
-    eventSource = null;
-  }
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
 function startPollingFallback() {
@@ -1010,9 +1003,7 @@ function connectEvents() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopLiveUpdates();
-  else {
-    fetchStatus().finally(connectEvents);
-  }
+  else fetchStatus().finally(connectEvents);
 });
 
 fetchStatus().finally(connectEvents);

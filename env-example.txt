@@ -1,10 +1,32 @@
-START_NOTIFICATION_CURL="curl -X POST https://example.com/start -H 'Content-Type: application/json' -d '{\"status\":\"started\"}'"
+# Login credentials (required for dashboard access)
+AUTH_USERNAME=admin
+AUTH_PASSWORD=change-me-strong-password
+SESSION_SECRET=change-me-long-random-secret
 
-STOP_NOTIFICATION_CURL="curl -X POST https://example.com/stop -H 'Content-Type: application/json' -d '{\"status\":\"stopped\"}'"
+# Optional notification webhooks (##### is replaced with container name)
+START_NOTIFICATION_CURL="curl -X POST https://example.com/start -H 'Content-Type: application/json' -d '{\"status\":\"started\",\"name\":\"#####\"}'"
+STOP_NOTIFICATION_CURL="curl -X POST https://example.com/stop -H 'Content-Type: application/json' -d '{\"status\":\"stopped\",\"name\":\"#####\"}'"
+
+# SMTP email alerts when a container goes down or comes up
+# Leave SMTP_HOST empty to disable email
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=alerts@example.com
+SMTP_PASSWORD=smtp-password
+SMTP_FROM=Docker Guardian <alerts@example.com>
+SMTP_TO=ops@example.com
+SMTP_USE_TLS=true
 
 # Optional: override detected host IP shown in the dashboard header
 # SERVER_IP=203.0.113.10
 
+# Optional: disk path to report free space for
+# Inside Docker Compose this defaults to /host (host root mounted read-only)
+# DISK_PATH=/host
+
 # Optional: lower guardian CPU usage
 # METRICS_INTERVAL=10
 # CONTAINER_STATS_EVERY=2
+# CPU_THRESHOLD=80
+# RAM_THRESHOLD=80
+# CHECK_INTERVAL=10
