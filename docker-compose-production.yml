@@ -10,9 +10,10 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
 
-    # Secrets and SMTP/auth MUST come from .env (do not override with empty ${VAR})
+    # Secrets and SMTP/auth come from .env when present (optional so pull/up works before creating it)
     env_file:
-      - .env
+      - path: .env
+        required: false
       
     volumes:
       # CRITICAL: Allows the app to interact with the host's Docker daemon
