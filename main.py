@@ -27,8 +27,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from database import load_containers, load_settings, upsert_container, upsert_settings
 
-# Prefer values from .env over empty/placeholder process env (common with Compose).
-load_dotenv(override=True)
+# Container/process env is the source of truth (Compose env_file).
+# A local .env only fills keys that are not already set.
+load_dotenv(override=False)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -69,11 +70,19 @@ def _resolve_disk_path() -> str:
 
 DISK_PATH = _resolve_disk_path()
 
-AUTH_USERNAME = _env("AUTH_USERNAME", "admin") or "admin"
-AUTH_PASSWORD = _env("AUTH_PASSWORD")
 SESSION_SECRET = _env("SESSION_SECRET") or secrets.token_hex(32)
-# Auth is ALWAYS required. Missing password = refuse all dashboard access.
-AUTH_CONFIGURED = bool(AUTH_PASSWORD)
+
+
+def _auth_credentials() -> tuple[str, str]:
+    """Read login credentials from the live process/container environment."""
+    username = _env("AUTH_USERNAME", "admin") or "admin"
+    password = _env("AUTH_PASSWORD")
+    return username, password
+
+
+def _auth_configured() -> bool:
+    return bool(_auth_credentials()[1])
+
 
 SMTP_HOST = _env("SMTP_HOST")
 SMTP_PORT = int(_env("SMTP_PORT", "587") or "587")
@@ -131,12 +140,12 @@ class AuthGateMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if not AUTH_CONFIGURED:
+        if not _auth_configured():
             response: Response
             if path.startswith("/api/"):
                 response = JSONResponse({"detail": "AUTH_PASSWORD is not configured"}, status_code=503)
             else:
-                response = _render_login("AUTH_PASSWORD در فایل .env تنظیم نشده است")
+                response = _render_login("AUTH_PASSWORD در محیط کانتینر تنظیم نشده است")
             await response(scope, receive, send)
             return
 
@@ -255,19 +264,20 @@ def _render_login(error: str = "") -> HTMLResponse:
 
 
 def _is_authed(request: Request) -> bool:
-    return AUTH_CONFIGURED and request.session.get("authenticated") is True
+    return _auth_configured() and request.session.get("authenticated") is True
 
 
 def _verify_password(username: str, password: str) -> bool:
-    if not AUTH_CONFIGURED:
+    expected_user, expected_pass = _auth_credentials()
+    if not expected_pass:
         return False
     user_ok = hmac.compare_digest(
         username.encode("utf-8"),
-        AUTH_USERNAME.encode("utf-8"),
+        expected_user.encode("utf-8"),
     )
     pass_ok = hmac.compare_digest(
         password.encode("utf-8"),
-        AUTH_PASSWORD.encode("utf-8"),
+        expected_pass.encode("utf-8"),
     )
     return user_ok and pass_ok
 
@@ -621,7 +631,7 @@ def full_payload() -> dict:
         "suspended_count": len(suspended_containers),
         "logs": cached_tail_logs(40),
         "auth_enabled": True,
-        "auth_configured": AUTH_CONFIGURED,
+        "auth_configured": _auth_configured(),
         "email_enabled": EMAIL_ENABLED,
     })
     return payload
@@ -770,14 +780,15 @@ async def startup():
     global monitor_running, monitor_task, metrics_task
     global cached_containers
     load_state()
-    if not AUTH_CONFIGURED:
+    auth_user, auth_pass = _auth_credentials()
+    if not auth_pass:
         logger.error("❌ AUTH_PASSWORD is missing — login required but not configured")
     else:
-        logger.info(f"🔐 Auth required for user '{AUTH_USERNAME}'")
+        logger.info(f"🔐 Auth required for user '{auth_user}'")
     if EMAIL_ENABLED:
         logger.info(f"📧 SMTP alerts enabled → {SMTP_TO} via {SMTP_HOST}:{SMTP_PORT}")
     else:
-        logger.info("📧 SMTP alerts disabled (set SMTP_HOST and SMTP_TO in .env)")
+        logger.info("📧 SMTP alerts disabled (set SMTP_HOST and SMTP_TO in env)")
     logger.info(
         f"🖥️  Server {SERVER_INFO['hostname']} ip={SERVER_INFO['ip']} "
         f"cpu={SERVER_INFO['cpu_cores']} ram={SERVER_INFO['ram_total_gb']}GB"
@@ -808,24 +819,25 @@ async def healthz():
 async def login_page(request: Request):
     if _is_authed(request):
         return RedirectResponse(url="/", status_code=303)
-    if not AUTH_CONFIGURED:
-        return _render_login("AUTH_PASSWORD در فایل .env تنظیم نشده است")
+    if not _auth_configured():
+        return _render_login("AUTH_PASSWORD در محیط کانتینر تنظیم نشده است")
     return _render_login()
 
 
 @app.post("/login")
 async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
-    if not AUTH_CONFIGURED:
-        return _render_login("AUTH_PASSWORD در فایل .env تنظیم نشده است")
+    if not _auth_configured():
+        return _render_login("AUTH_PASSWORD در محیط کانتینر تنظیم نشده است")
     # tiny delay to slow brute force
     await asyncio.sleep(0.2)
     if _verify_password(username.strip(), password):
+        auth_user, _ = _auth_credentials()
         request.session.clear()
         request.session["authenticated"] = True
-        request.session["user"] = AUTH_USERNAME
+        request.session["user"] = auth_user
         request.session["csrf"] = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
         logger.info(
-            f"🔓 Login success for '{AUTH_USERNAME}' "
+            f"🔓 Login success for '{auth_user}' "
             f"from {request.client.host if request.client else '?'}"
         )
         return RedirectResponse(url="/", status_code=303)
