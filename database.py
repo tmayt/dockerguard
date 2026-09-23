@@ -29,10 +29,16 @@ def _connect() -> sqlite3.Connection:
                 id INTEGER PRIMARY KEY,
                 cpu_threshold REAL DEFAULT 80,
                 ram_threshold REAL DEFAULT 80,
-                check_interval INTEGER DEFAULT 10
+                check_interval INTEGER DEFAULT 10,
+                cpu_high_streak INTEGER DEFAULT 3
             );
             """
         )
+        cols = {row[1] for row in _conn.execute("PRAGMA table_info(settings)")}
+        if "cpu_high_streak" not in cols:
+            _conn.execute(
+                "ALTER TABLE settings ADD COLUMN cpu_high_streak INTEGER DEFAULT 3"
+            )
         _conn.commit()
     return _conn
 
@@ -40,14 +46,21 @@ def _connect() -> sqlite3.Connection:
 def load_settings():
     with _lock:
         row = _connect().execute(
-            "SELECT cpu_threshold, ram_threshold, check_interval FROM settings WHERE id=1"
+            """
+            SELECT cpu_threshold, ram_threshold, check_interval, cpu_high_streak
+            FROM settings WHERE id=1
+            """
         ).fetchone()
         if not row:
             return None
+        streak = row["cpu_high_streak"]
+        if streak is None:
+            streak = 3
         return {
             "cpu_threshold": row["cpu_threshold"],
             "ram_threshold": row["ram_threshold"],
             "check_interval": row["check_interval"],
+            "cpu_high_streak": int(streak),
         }
 
 
@@ -94,18 +107,19 @@ def upsert_container(name, priority=None, suspended=None):
         conn.commit()
 
 
-def upsert_settings(cpu_threshold, ram_threshold, check_interval):
+def upsert_settings(cpu_threshold, ram_threshold, check_interval, cpu_high_streak=3):
     with _lock:
         conn = _connect()
         conn.execute(
             """
-            INSERT INTO settings(id, cpu_threshold, ram_threshold, check_interval)
-            VALUES (1, ?, ?, ?)
+            INSERT INTO settings(id, cpu_threshold, ram_threshold, check_interval, cpu_high_streak)
+            VALUES (1, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 cpu_threshold=excluded.cpu_threshold,
                 ram_threshold=excluded.ram_threshold,
-                check_interval=excluded.check_interval
+                check_interval=excluded.check_interval,
+                cpu_high_streak=excluded.cpu_high_streak
             """,
-            (cpu_threshold, ram_threshold, check_interval),
+            (cpu_threshold, ram_threshold, check_interval, int(cpu_high_streak)),
         )
         conn.commit()

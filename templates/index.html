@@ -2,7 +2,7 @@
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Docker Guardian</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -11,9 +11,7 @@
   :root {
     --bg: #060a11;
     --bg-glow: rgba(34, 197, 94, 0.08);
-    --surface: rgba(14, 22, 36, 0.88);
-    --surface-solid: #0e1624;
-    --surface-hover: #152033;
+    --surface: rgba(14, 22, 36, 0.92);
     --border: #1c2b42;
     --accent: #22c55e;
     --accent2: #38bdf8;
@@ -26,9 +24,11 @@
     --sans: "IBM Plex Sans Arabic", Tahoma, system-ui, sans-serif;
     --radius: 16px;
     --shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+    --pad: 20px;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
 
   body {
     background:
@@ -45,26 +45,27 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 14px;
-    padding: 14px 22px;
+    gap: 12px;
+    padding: 12px var(--pad);
+    padding-top: max(12px, env(safe-area-inset-top));
     border-bottom: 1px solid var(--border);
-    background: rgba(8, 12, 20, 0.85);
+    background: rgba(8, 12, 20, 0.9);
     backdrop-filter: blur(14px);
     position: sticky;
     top: 0;
     z-index: 100;
   }
 
-  .logo { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .logo { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .logo-icon {
-    width: 42px; height: 42px; flex-shrink: 0;
+    width: 40px; height: 40px; flex-shrink: 0;
     background: linear-gradient(145deg, #16a34a, #0ea5e9);
     border-radius: 12px;
     display: grid; place-items: center;
-    font-size: 20px;
+    font-size: 18px;
     box-shadow: 0 8px 22px rgba(34, 197, 94, 0.22);
   }
-  .logo-text { font-size: 17px; font-weight: 700; color: #fff; white-space: nowrap; }
+  .logo-text { font-size: 16px; font-weight: 700; color: #fff; }
   .logo-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
 
   .server-strip {
@@ -86,22 +87,29 @@
   }
   .server-chip .v {
     color: var(--text); font-family: var(--mono); font-weight: 600;
-    direction: ltr; overflow: hidden; text-overflow: ellipsis;
+    direction: ltr; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
   }
   .server-chip .v.accent { color: var(--accent); }
 
   .header-actions {
-    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
   }
   .header-status {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 8px;
     background: rgba(255,255,255,0.02);
-    padding: 6px 12px; border-radius: 999px;
+    padding: 6px 10px; border-radius: 999px;
     border: 1px solid var(--border);
+    max-width: 200px;
+  }
+  #hdr-text {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .pulse {
-    width: 9px; height: 9px; border-radius: 50%;
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
     background: var(--ok); box-shadow: 0 0 10px var(--ok);
     animation: pulse 2s infinite;
   }
@@ -114,41 +122,51 @@
     50% { opacity: 0.35; transform: scale(0.9); }
   }
 
-  .container { max-width: 1440px; margin: 0 auto; padding: 20px 22px 40px; }
+  .container {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 18px var(--pad) 40px;
+    padding-bottom: max(40px, env(safe-area-inset-bottom));
+  }
 
   .grid-top {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 14px;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
   }
 
   .grid-main {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 360px;
-    gap: 18px;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    gap: 16px;
+    align-items: start;
   }
 
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: 16px;
     box-shadow: var(--shadow);
-    backdrop-filter: blur(8px);
+    min-width: 0;
   }
 
   .card-title {
     font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px;
-    color: var(--muted); margin-bottom: 12px; font-weight: 600; font-family: var(--mono);
+    color: var(--muted); margin-bottom: 10px; font-weight: 600; font-family: var(--mono);
   }
 
   .gauge-card { text-align: center; }
   .gauge-val {
-    font-size: 36px; font-weight: 700; font-family: var(--mono);
+    font-size: clamp(26px, 4vw, 36px); font-weight: 700; font-family: var(--mono);
     line-height: 1; margin-bottom: 6px; transition: color 0.3s;
   }
-  .gauge-label { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .gauge-label { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .gauge-sub {
+    font-size: 11px; color: var(--muted); font-family: var(--mono);
+    margin-top: 8px; direction: ltr;
+  }
 
   .bar-track {
     height: 7px; background: rgba(30, 45, 69, 0.55);
@@ -164,7 +182,8 @@
 
   .stat-row {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 9px 0; border-bottom: 1px solid rgba(30, 45, 69, 0.45); font-size: 13px;
+    gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid rgba(30, 45, 69, 0.45); font-size: 13px;
   }
   .stat-row:last-child { border-bottom: none; padding-bottom: 0; }
   .stat-row:first-child { padding-top: 0; }
@@ -172,19 +191,21 @@
   .stat-val { font-family: var(--mono); font-weight: 600; }
 
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    padding: 10px 16px; border-radius: 10px; border: none; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 10px 14px; border-radius: 10px; border: none; cursor: pointer;
     font-size: 13px; font-family: var(--sans); font-weight: 600;
     transition: transform 0.15s, opacity 0.2s, background 0.2s;
+    min-height: 40px;
+    touch-action: manipulation;
   }
-  .btn:hover:not(:disabled) { opacity: 0.92; transform: translateY(-1px); }
-  .btn:active:not(:disabled) { transform: translateY(1px); }
-  .btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; transform: none !important; }
+  .btn:hover:not(:disabled) { opacity: 0.92; }
+  .btn:active:not(:disabled) { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; }
   .btn-accent { background: var(--accent); color: #04110a; }
   .btn-danger { background: var(--danger); color: #1a0505; }
   .btn-ok { background: var(--ok); color: #04110a; }
   .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
-  .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
+  .btn-sm { padding: 8px 12px; font-size: 12px; border-radius: 8px; min-height: 36px; }
 
   .section-head {
     display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
@@ -210,16 +231,19 @@
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 7px 10px;
+    padding: 8px 10px;
     font-family: var(--sans);
     font-size: 12px;
     outline: none;
+    min-height: 36px;
   }
-  .sort-select:focus, .sort-dir:focus { border-color: var(--accent); }
 
+  /* Desktop table */
   .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .desktop-table { display: block; }
+  .mobile-cards { display: none; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 640px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
   th {
     text-align: right; padding: 10px 12px; color: var(--muted);
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
@@ -233,7 +257,6 @@
     vertical-align: middle;
   }
   tr:last-child td { border-bottom: none; }
-  tr:hover td { background: rgba(255,255,255,0.015); }
 
   .status-dot {
     display: inline-block; width: 8px; height: 8px;
@@ -252,38 +275,83 @@
 
   .priority-wrap { display: flex; align-items: center; gap: 8px; }
   .priority-input {
-    width: 64px; padding: 6px 8px; border-radius: 8px;
+    width: 64px; padding: 8px; border-radius: 8px;
     border: 1px solid var(--border); background: #0b1220;
     color: var(--accent); font-family: var(--mono); font-size: 13px;
     font-weight: 600; text-align: center; outline: none;
+    min-height: 36px;
   }
   .priority-input:focus { border-color: var(--accent); }
   .priority-input:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* Mobile container cards */
+  .c-card {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    background: rgba(10, 16, 28, 0.65);
+    margin-bottom: 10px;
+  }
+  .c-card:last-child { margin-bottom: 0; }
+  .c-card-top {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+    margin-bottom: 8px;
+  }
+  .c-name { font-weight: 700; font-size: 14px; word-break: break-word; }
+  .c-image {
+    font-size: 11px; color: var(--muted); font-family: var(--mono);
+    word-break: break-all; margin-top: 4px;
+  }
+  .c-status {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; white-space: nowrap; flex-shrink: 0;
+  }
+  .c-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .c-meta-box {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(30, 45, 69, 0.5);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  .c-meta-k { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  .c-meta-v { font-family: var(--mono); font-size: 13px; font-weight: 600; direction: ltr; }
+  .c-actions {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .c-actions .btn { flex: 1; }
 
   input[type=range] {
     -webkit-appearance: none; width: 100%; height: 6px;
     border-radius: 99px; background: var(--border); outline: none; cursor: pointer;
   }
   input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 14px; height: 14px;
+    -webkit-appearance: none; width: 18px; height: 18px;
     border-radius: 50%; background: var(--accent); cursor: pointer;
   }
 
-  .right-panel { display: flex; flex-direction: column; gap: 14px; }
+  .right-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
   .thresh-group { margin-bottom: 14px; }
   .thresh-label {
-    display: flex; justify-content: space-between;
+    display: flex; justify-content: space-between; gap: 8px;
     font-size: 12px; color: var(--muted); margin-bottom: 8px;
   }
   .thresh-label span:last-child {
-    font-family: var(--mono); color: var(--text); font-weight: 600;
+    font-family: var(--mono); color: var(--text); font-weight: 600; white-space: nowrap;
+  }
+  .thresh-hint {
+    font-size: 11px; color: var(--muted); margin: -6px 0 12px; line-height: 1.5;
   }
 
   .log-box {
     background: #05070f; border: 1px solid var(--border); border-radius: 12px;
     padding: 12px; font-family: var(--mono); font-size: 11px; line-height: 1.7;
-    height: 260px; overflow-y: auto; color: #94a3b8;
+    height: 240px; overflow-y: auto; color: #94a3b8;
   }
   .log-line { white-space: pre-wrap; word-break: break-all; margin-bottom: 3px; padding-right: 6px; border-right: 2px solid transparent; }
   .log-line.warn { color: var(--warn); border-right-color: var(--warn); }
@@ -296,12 +364,12 @@
   .suspended-banner {
     background: rgba(248, 113, 113, 0.08);
     border: 1px solid rgba(248, 113, 113, 0.25);
-    border-radius: 12px; padding: 12px 16px; font-size: 13px;
-    color: #fecaca; display: none; margin-bottom: 14px;
+    border-radius: 12px; padding: 12px 14px; font-size: 13px;
+    color: #fecaca; display: none; margin-bottom: 14px; line-height: 1.5;
   }
   .suspended-banner.visible { display: block; }
 
-  .empty { text-align: center; padding: 40px; color: var(--muted); font-size: 14px; }
+  .empty { text-align: center; padding: 36px 16px; color: var(--muted); font-size: 14px; }
   .tag-suspended {
     font-size: 10px; font-family: var(--mono);
     background: rgba(248, 113, 113, 0.15); color: #fecaca;
@@ -309,11 +377,12 @@
   }
 
   .toast {
-    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px);
+    position: fixed; bottom: max(20px, env(safe-area-inset-bottom));
+    left: 50%; transform: translateX(-50%) translateY(20px);
     background: #122033; border: 1px solid var(--border); color: var(--text);
     padding: 10px 16px; border-radius: 999px; font-size: 13px;
     opacity: 0; pointer-events: none; transition: all 0.25s ease; z-index: 200;
-    box-shadow: var(--shadow);
+    box-shadow: var(--shadow); max-width: calc(100vw - 32px); text-align: center;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .toast.ok { border-color: rgba(52, 211, 153, 0.4); }
@@ -322,25 +391,76 @@
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
 
-  @media (max-width: 1200px) {
-    .grid-top { grid-template-columns: repeat(3, 1fr); }
+  /* ── Tablet ── */
+  @media (max-width: 1100px) {
+    .grid-top { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .grid-main { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 900px) {
-    header { flex-wrap: wrap; padding: 12px 14px; }
+    header { flex-wrap: wrap; }
     .server-strip { order: 3; width: 100%; justify-content: flex-start; }
-    .logo-sub { display: none; }
-    .container { padding: 14px 12px 32px; }
-    .grid-top { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-    .gauge-val { font-size: 28px; }
-    .card { padding: 14px; border-radius: 14px; }
-    .sort-bar { width: 100%; margin-right: 0; }
-    #hdr-text { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
-  @media (max-width: 520px) {
-    .grid-top { grid-template-columns: 1fr 1fr; }
-    .header-status { padding: 6px 8px; }
+
+  /* ── Mobile ── */
+  @media (max-width: 720px) {
+    :root { --pad: 12px; --radius: 14px; }
+
+    header {
+      padding: 10px var(--pad);
+      padding-top: max(10px, env(safe-area-inset-top));
+      gap: 8px;
+    }
+    .logo-sub { display: none; }
+    .logo-text { font-size: 14px; }
+    .logo-icon { width: 36px; height: 36px; font-size: 16px; border-radius: 10px; }
+
+    .server-strip {
+      gap: 6px;
+      max-height: none;
+    }
+    .server-chip {
+      padding: 4px 8px;
+      font-size: 10px;
+      max-width: calc(50% - 4px);
+    }
+    .server-chip .v { max-width: 100px; }
+    .server-chip.chip-os,
+    .server-chip.chip-host { display: none; }
+
+    .header-status {
+      max-width: 130px;
+      padding: 5px 8px;
+    }
+    #hdr-text { font-size: 11px; }
     .btn-logout span { display: none; }
+
+    .container { padding: 12px var(--pad) 28px; }
+
+    .grid-top {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .grid-top .card-status { grid-column: 1 / -1; }
+
+    .card { padding: 12px; }
+    .gauge-val { font-size: 28px; }
+    .gauge-label, .gauge-sub { font-size: 11px; }
+
+    .section-head { gap: 8px; }
+    .sort-bar {
+      width: 100%;
+      margin-right: 0;
+    }
+    .sort-select, .sort-dir { flex: 1; min-width: 0; }
+
+    .desktop-table { display: none !important; }
+    .mobile-cards { display: block !important; }
+
+    .log-box { height: 200px; font-size: 10px; }
+  }
+
+  @media (max-width: 380px) {
+    .grid-top { gap: 8px; }
+    .gauge-val { font-size: 24px; }
+    .c-meta { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -354,16 +474,16 @@
       <div class="logo-sub">resource monitor & auto-scaler</div>
     </div>
   </div>
-  <div class="server-strip" id="server-strip" title="اطلاعات ثابت سرور">
+  <div class="server-strip" id="server-strip" title="اطلاعات سرور">
     <div class="server-chip"><span class="k">IP</span><span class="v accent" id="srv-ip">—</span></div>
-    <div class="server-chip"><span class="k">Host</span><span class="v" id="srv-host">—</span></div>
-    <div class="server-chip"><span class="k">OS</span><span class="v" id="srv-os">—</span></div>
-    <div class="server-chip"><span class="k">Disk free</span><span class="v" id="srv-disk">—</span></div>
-    <div class="server-chip"><span class="k">Uptime</span><span class="v" id="srv-uptime">—</span></div>
+    <div class="server-chip chip-host"><span class="k">Host</span><span class="v" id="srv-host">—</span></div>
+    <div class="server-chip chip-os"><span class="k">OS</span><span class="v" id="srv-os">—</span></div>
+    <div class="server-chip"><span class="k">Disk</span><span class="v" id="srv-disk">—</span></div>
+    <div class="server-chip"><span class="k">Up</span><span class="v" id="srv-uptime">—</span></div>
   </div>
   <div class="header-actions">
     <div class="header-status">
-      <span id="hdr-text" style="font-size:12px;color:var(--muted)">در حال بارگذاری...</span>
+      <span id="hdr-text" style="color:var(--muted)">بارگذاری...</span>
       <div class="pulse off" id="hdr-pulse"></div>
     </div>
     <a class="btn btn-ghost btn-sm btn-logout" href="/logout" title="خروج">⎋ <span>خروج</span></a>
@@ -374,10 +494,11 @@
 
   <div class="grid-top">
     <div class="card gauge-card">
-      <div class="card-title">CPU</div>
+      <div class="card-title">CPU (۱ دقیقه)</div>
       <div class="gauge-val" id="cpu-val" style="color:var(--ok)">—</div>
-      <div class="gauge-label">درصد استفاده</div>
+      <div class="gauge-label">میانگین یک دقیقه</div>
       <div class="bar-track"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+      <div class="gauge-sub" id="cpu-now">لحظه‌ای: —</div>
     </div>
     <div class="card gauge-card">
       <div class="card-title">RAM</div>
@@ -397,7 +518,7 @@
       <div class="gauge-label" id="disk-label">آزاد — از —</div>
       <div class="bar-track"><div class="bar-fill" id="disk-bar" style="width:0%;background:var(--accent2)"></div></div>
     </div>
-    <div class="card">
+    <div class="card card-status">
       <div class="card-title">وضعیت کلی</div>
       <div class="stat-row">
         <span class="stat-key">Docker</span>
@@ -426,7 +547,7 @@
     <div class="card">
       <div class="section-head">
         <div class="section-title">
-          کانتینرهای Docker
+          کانتینرها
           <span class="badge" id="cnt-badge">0</span>
         </div>
         <div class="sort-bar">
@@ -461,12 +582,21 @@
         <div class="card-title">آستانه‌های هشدار</div>
         <div class="thresh-group">
           <div class="thresh-label">
-            <span>CPU حداکثر</span>
+            <span>CPU حداکثر (میانگین ۱ دقیقه)</span>
             <span id="cpu-thresh-label">80%</span>
           </div>
           <input type="range" class="thresh" min="10" max="99" value="80" id="cpu-thresh"
                  oninput="document.getElementById('cpu-thresh-label').textContent=this.value+'%'">
         </div>
+        <div class="thresh-group">
+          <div class="thresh-label">
+            <span>تعداد دوره CPU بالا برای خطر</span>
+            <span id="streak-thresh-label">3</span>
+          </div>
+          <input type="range" class="thresh" min="1" max="15" value="3" id="streak-thresh"
+                 oninput="document.getElementById('streak-thresh-label').textContent=this.value">
+        </div>
+        <p class="thresh-hint">اگر میانگین ۱ دقیقه‌ای CPU چند دوره پشت‌سرهم بالای آستانه بماند، خطر تشخیص داده می‌شود.</p>
         <div class="thresh-group">
           <div class="thresh-label">
             <span>RAM حداکثر</span>
@@ -491,7 +621,7 @@
 
       <div class="card">
         <div class="section-head">
-          <div class="section-title">لاگ‌های سیستم</div>
+          <div class="section-title">لاگ‌ها</div>
           <button id="refresh-logs-btn" class="btn btn-ghost btn-sm" onclick="loadLogs(true)" style="margin-right:auto">
             به‌روز
           </button>
@@ -611,27 +741,29 @@ function applyDisk(d) {
   bar.style.width = pct + '%';
   bar.className = 'bar-fill ' + classFor(pct, 75, 90);
   const chip = document.getElementById('srv-disk');
-  if (chip) chip.textContent = `${d.disk_free_gb ?? '—'} GB free`;
+  if (chip) chip.textContent = `${d.disk_free_gb ?? '—'}G free`;
 }
 
 function applyMetrics(d) {
   if (d.server) applyServerInfo(d.server);
   applyDisk(d);
 
-  const cpu = Number(d.cpu || 0).toFixed(1);
-  const ram = Number(d.ram || 0).toFixed(1);
+  const cpuAvg = Number(d.cpu_avg_1m != null ? d.cpu_avg_1m : d.cpu || 0);
+  const cpuNow = Number(d.cpu || 0);
+  const ram = Number(d.ram || 0);
 
-  document.getElementById('cpu-val').textContent = cpu + '%';
-  document.getElementById('cpu-val').style.color = colorFor(d.cpu);
+  document.getElementById('cpu-val').textContent = cpuAvg.toFixed(1) + '%';
+  document.getElementById('cpu-val').style.color = colorFor(cpuAvg);
   const cpuBar = document.getElementById('cpu-bar');
-  cpuBar.style.width = cpu + '%';
-  cpuBar.className = 'bar-fill ' + classFor(d.cpu);
+  cpuBar.style.width = Math.min(100, cpuAvg) + '%';
+  cpuBar.className = 'bar-fill ' + classFor(cpuAvg);
+  document.getElementById('cpu-now').textContent = 'لحظه‌ای: ' + cpuNow.toFixed(1) + '%';
 
-  document.getElementById('ram-val').textContent = ram + '%';
-  document.getElementById('ram-val').style.color = colorFor(d.ram);
+  document.getElementById('ram-val').textContent = ram.toFixed(1) + '%';
+  document.getElementById('ram-val').style.color = colorFor(ram);
   const ramBar = document.getElementById('ram-bar');
   ramBar.style.width = ram + '%';
-  ramBar.className = 'bar-fill ' + classFor(d.ram);
+  ramBar.className = 'bar-fill ' + classFor(ram);
 
   if (d.ram_used_gb != null) document.getElementById('ram-gb').textContent = d.ram_used_gb + ' GB';
   if (d.ram_total_gb != null) document.getElementById('ram-total').textContent = 'از ' + d.ram_total_gb + ' GB';
@@ -663,16 +795,15 @@ function applyMetrics(d) {
     hdrText.textContent = 'منابع اشباع';
     hdrText.style.color = 'var(--danger)';
   } else if (d.cpu_high_streak > 0) {
-    hdrText.textContent = `CPU بالا ${d.cpu_high_streak}/${d.cpu_high_streak_required}`;
+    hdrText.textContent = `CPU ${d.cpu_high_streak}/${d.cpu_high_streak_required}`;
     hdrText.style.color = 'var(--warn)';
   } else {
-    hdrText.textContent = d.monitor_running ? 'وضعیت نرمال' : 'مانیتور متوقف';
+    hdrText.textContent = d.monitor_running ? 'نرمال' : 'متوقف';
     hdrText.style.color = d.monitor_running ? 'var(--ok)' : 'var(--muted)';
   }
 
   if (d.usage) {
     lastUsage = d.usage;
-    // merge into lastContainers for live re-sort
     lastContainers = lastContainers.map(c => {
       const u = d.usage[c.name] || {};
       return { ...c, cpu: u.cpu, ram_mb: u.ram_mb };
@@ -683,6 +814,19 @@ function applyMetrics(d) {
       updateUsage(d.usage);
     }
   }
+}
+
+function applyThresholds(t) {
+  if (!t) return;
+  document.getElementById('cpu-thresh').value = t.cpu;
+  document.getElementById('cpu-thresh-label').textContent = t.cpu + '%';
+  document.getElementById('ram-thresh').value = t.ram;
+  document.getElementById('ram-thresh-label').textContent = t.ram + '%';
+  document.getElementById('interval-thresh').value = t.interval;
+  document.getElementById('interval-label').textContent = t.interval + 's';
+  const streak = t.cpu_streak != null ? t.cpu_streak : 3;
+  document.getElementById('streak-thresh').value = streak;
+  document.getElementById('streak-thresh-label').textContent = streak;
 }
 
 function updateDashboard(d) {
@@ -700,13 +844,7 @@ function updateDashboard(d) {
 
   if (d.thresholds && !window._threshLoaded) {
     window._threshLoaded = true;
-    const t = d.thresholds;
-    document.getElementById('cpu-thresh').value = t.cpu;
-    document.getElementById('cpu-thresh-label').textContent = t.cpu + '%';
-    document.getElementById('ram-thresh').value = t.ram;
-    document.getElementById('ram-thresh-label').textContent = t.ram + '%';
-    document.getElementById('interval-thresh').value = t.interval;
-    document.getElementById('interval-label').textContent = t.interval + 's';
+    applyThresholds(d.thresholds);
   }
 
   if (d.containers) {
@@ -732,14 +870,15 @@ function formatRam(mb) {
 
 function updateUsage(usage) {
   if (!usage) return;
-  document.querySelectorAll('#containers-wrap tr[data-name]').forEach(tr => {
-    const u = usage[tr.dataset.name] || {};
-    const cpuEl = tr.querySelector('.use-cpu');
-    const ramEl = tr.querySelector('.use-ram');
-    if (!cpuEl || !ramEl) return;
-    cpuEl.textContent = formatCpu(u.cpu);
-    ramEl.textContent = formatRam(u.ram_mb);
-    cpuEl.style.color = (u.cpu == null) ? 'var(--muted)' : colorFor(Number(u.cpu), 50, 80);
+  document.querySelectorAll('#containers-wrap [data-name]').forEach(el => {
+    const u = usage[el.dataset.name] || {};
+    const cpuEl = el.querySelector('.use-cpu');
+    const ramEl = el.querySelector('.use-ram');
+    if (cpuEl) {
+      cpuEl.textContent = formatCpu(u.cpu);
+      cpuEl.style.color = (u.cpu == null) ? 'var(--muted)' : colorFor(Number(u.cpu), 50, 80);
+    }
+    if (ramEl) ramEl.textContent = formatRam(u.ram_mb);
   });
 }
 
@@ -767,6 +906,12 @@ function onSortChange() {
   localStorage.setItem('dg_sort_dir', sortDir);
   containersFingerprint = '';
   renderContainers(lastContainers, true);
+}
+
+function actionButton(c, name) {
+  return c.status === 'running'
+    ? `<button class="btn btn-danger btn-sm" data-action="stop" data-name="${name}">توقف</button>`
+    : `<button class="btn btn-ok btn-sm" data-action="start" data-name="${name}">شروع</button>`;
 }
 
 function renderContainers(list, force = false) {
@@ -818,25 +963,59 @@ function renderContainers(list, force = false) {
         <input class="priority-input" type="number" min="1" max="10" step="1" inputmode="numeric"
                value="${priority}" data-name="${name}">
       </div>`;
-    const actCell = c.status === 'running'
-      ? `<button class="btn btn-danger btn-sm" data-action="stop" data-name="${name}">توقف</button>`
-      : `<button class="btn btn-ok btn-sm" data-action="start" data-name="${name}">شروع</button>`;
-    return `<tr data-name="${name}"><td>${nameCell}</td><td>${statusCell}</td><td>${useCell}</td><td>${prioCell}</td><td>${actCell}</td></tr>`;
+    return `<tr data-name="${name}"><td>${nameCell}</td><td>${statusCell}</td><td>${useCell}</td><td>${prioCell}</td><td>${actionButton(c, name)}</td></tr>`;
+  }).join('');
+
+  const cards = sorted.map(c => {
+    const dotClass = {running:'dot-running', exited:'dot-exited', stopped:'dot-stopped'}[c.status] || 'dot-exited';
+    const name = escapeHtml(c.name);
+    const image = escapeHtml(c.image);
+    const priority = Number.parseInt(c.priority, 10) || 5;
+    return `
+      <div class="c-card" data-name="${name}">
+        <div class="c-card-top">
+          <div>
+            ${c.suspended_by_guardian ? '<span class="tag-suspended">guardian</span>' : ''}
+            <div class="c-name">${name}</div>
+            <div class="c-image">${image}</div>
+          </div>
+          <div class="c-status"><span class="status-dot ${dotClass}"></span>${escapeHtml(c.status)}</div>
+        </div>
+        <div class="c-meta">
+          <div class="c-meta-box">
+            <div class="c-meta-k">CPU</div>
+            <div class="c-meta-v use-cpu">${formatCpu(c.cpu)}</div>
+          </div>
+          <div class="c-meta-box">
+            <div class="c-meta-k">RAM</div>
+            <div class="c-meta-v use-ram">${formatRam(c.ram_mb)}</div>
+          </div>
+        </div>
+        <div class="c-actions">
+          <div class="priority-wrap">
+            <span style="font-size:11px;color:var(--muted)">اولویت</span>
+            <input class="priority-input" type="number" min="1" max="10" step="1" inputmode="numeric"
+                   value="${priority}" data-name="${name}">
+          </div>
+          ${actionButton(c, name)}
+        </div>
+      </div>`;
   }).join('');
 
   wrap.innerHTML = `
-    <div class="table-scroll">
+    <div class="desktop-table table-scroll">
       <table>
         <thead><tr>
           <th class="sortable" data-sort="name">نام / تصویر <span class="sort-ind">${arrow('name')}</span></th>
           <th class="sortable" data-sort="status">وضعیت <span class="sort-ind">${arrow('status')}</span></th>
-          <th class="sortable" data-sort="cpu">مصرف لحظه‌ای <span class="sort-ind">${arrow('cpu') || arrow('ram')}</span></th>
-          <th class="sortable" data-sort="priority">اولویت (۱=پایین) <span class="sort-ind">${arrow('priority')}</span></th>
+          <th class="sortable" data-sort="cpu">مصرف <span class="sort-ind">${arrow('cpu') || arrow('ram')}</span></th>
+          <th class="sortable" data-sort="priority">اولویت <span class="sort-ind">${arrow('priority')}</span></th>
           <th>عملیات</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`;
+    </div>
+    <div class="mobile-cards">${cards}</div>`;
 }
 
 document.getElementById('containers-wrap').addEventListener('change', (e) => {
@@ -876,6 +1055,8 @@ async function setPriority(name, val, inputEl) {
     if (!r.ok) throw new Error('failed');
     const item = lastContainers.find(c => c.name === name);
     if (item) item.priority = priority;
+    document.querySelectorAll(`.priority-input[data-name="${CSS.escape(name)}"]`)
+      .forEach(el => { el.value = priority; });
     showToast('اولویت ذخیره شد');
   } catch (e) {
     console.error(e);
@@ -917,21 +1098,17 @@ async function saveThresholds() {
   const cpu = Number.parseFloat(document.getElementById('cpu-thresh').value);
   const ram = Number.parseFloat(document.getElementById('ram-thresh').value);
   const interval = Number.parseInt(document.getElementById('interval-thresh').value, 10);
+  const cpu_streak = Number.parseInt(document.getElementById('streak-thresh').value, 10);
   try {
     const r = await fetch('/api/thresholds', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({cpu, ram, interval})
+      body: JSON.stringify({cpu, ram, interval, cpu_streak})
     });
     if (!r.ok) throw new Error('save failed');
     const d = await r.json();
     window._threshLoaded = true;
-    document.getElementById('cpu-thresh').value = d.cpu;
-    document.getElementById('cpu-thresh-label').textContent = d.cpu + '%';
-    document.getElementById('ram-thresh').value = d.ram;
-    document.getElementById('ram-thresh-label').textContent = d.ram + '%';
-    document.getElementById('interval-thresh').value = d.interval;
-    document.getElementById('interval-label').textContent = d.interval + 's';
+    applyThresholds(d);
     showToast('تنظیمات ذخیره شد');
   } catch (e) {
     console.error(e);

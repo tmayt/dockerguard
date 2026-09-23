@@ -10,6 +10,7 @@ import smtplib
 import socket
 import subprocess
 import time
+from collections import deque
 from email.message import EmailMessage
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -98,6 +99,7 @@ CPU_THRESHOLD = float(_env("CPU_THRESHOLD", "80") or "80")
 RAM_THRESHOLD = float(_env("RAM_THRESHOLD", "80") or "80")
 CHECK_INTERVAL = int(_env("CHECK_INTERVAL", "10") or "10")
 CPU_HIGH_STREAK_REQUIRED = int(_env("CPU_HIGH_STREAK", "3") or "3")
+CPU_AVG_WINDOW_SEC = float(_env("CPU_AVG_WINDOW_SEC", "60") or "60")
 LOG_FILE = Path(_env("LOG_FILE", "logs/guardian.log") or "logs/guardian.log")
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -196,6 +198,7 @@ subscribers: set[asyncio.Queue] = set()
 RAM_TOTAL_GB = round(psutil.virtual_memory().total / 1e9, 2)
 last_metrics = {
     "cpu": 0.0,
+    "cpu_avg_1m": 0.0,
     "ram": 0.0,
     "ram_used_gb": 0.0,
     "ram_total_gb": RAM_TOTAL_GB,
@@ -205,6 +208,7 @@ last_metrics = {
     "disk_total_gb": 0.0,
     "disk_path": DISK_PATH,
 }
+_cpu_samples: deque[tuple[float, float]] = deque()
 _stats_tick = 0
 _cached_logs: list[str] = []
 _cached_logs_at = 0.0
@@ -283,7 +287,7 @@ def _verify_password(username: str, password: str) -> bool:
 
 
 def load_state():
-    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL
+    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL, CPU_HIGH_STREAK_REQUIRED
     global priority_map, suspended_containers
 
     settings = load_settings()
@@ -291,6 +295,8 @@ def load_state():
         CPU_THRESHOLD = settings["cpu_threshold"]
         RAM_THRESHOLD = settings["ram_threshold"]
         CHECK_INTERVAL = settings["check_interval"]
+        if settings.get("cpu_high_streak"):
+            CPU_HIGH_STREAK_REQUIRED = max(1, int(settings["cpu_high_streak"]))
 
     configs = load_containers()
     priority_map = {item["name"]: int(item["priority"]) for item in configs}
@@ -312,7 +318,7 @@ def save_container(name, priority=None, suspended=None):
 
 
 def save_settings():
-    upsert_settings(CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL)
+    upsert_settings(CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL, CPU_HIGH_STREAK_REQUIRED)
 
 
 def as_priority(value) -> int:
@@ -418,6 +424,7 @@ class ThresholdUpdate(BaseModel):
     cpu: Optional[float] = None
     ram: Optional[float] = None
     interval: Optional[int] = None
+    cpu_streak: Optional[int] = Field(default=None, ge=1, le=30)
 
 # ─── Docker helpers ───────────────────────────────────────────────────────────
 def collect_container_info() -> list[dict]:
@@ -580,9 +587,24 @@ def sample_disk():
         logger.error(f"Disk sample failed: {e}")
 
 
+def _update_cpu_avg(instant: float):
+    now = time.monotonic()
+    _cpu_samples.append((now, float(instant)))
+    cutoff = now - max(10.0, CPU_AVG_WINDOW_SEC)
+    while _cpu_samples and _cpu_samples[0][0] < cutoff:
+        _cpu_samples.popleft()
+    if _cpu_samples:
+        avg = sum(v for _, v in _cpu_samples) / len(_cpu_samples)
+        last_metrics["cpu_avg_1m"] = round(avg, 1)
+    else:
+        last_metrics["cpu_avg_1m"] = round(float(instant), 1)
+
+
 def sample_metrics():
     mem = psutil.virtual_memory()
-    last_metrics["cpu"] = psutil.cpu_percent(None)
+    instant = psutil.cpu_percent(None)
+    last_metrics["cpu"] = instant
+    _update_cpu_avg(instant)
     last_metrics["ram"] = mem.percent
     last_metrics["ram_used_gb"] = round(mem.used / 1e9, 2)
     last_metrics["ram_total_gb"] = RAM_TOTAL_GB
@@ -592,6 +614,7 @@ def sample_metrics():
 def metrics_payload() -> dict:
     return {
         "cpu": last_metrics["cpu"],
+        "cpu_avg_1m": last_metrics["cpu_avg_1m"],
         "ram": last_metrics["ram"],
         "ram_used_gb": last_metrics["ram_used_gb"],
         "ram_total_gb": last_metrics["ram_total_gb"],
@@ -625,7 +648,12 @@ def cached_tail_logs(n: int = 40) -> list[str]:
 def full_payload() -> dict:
     payload = metrics_payload()
     payload.update({
-        "thresholds": {"cpu": CPU_THRESHOLD, "ram": RAM_THRESHOLD, "interval": CHECK_INTERVAL},
+        "thresholds": {
+            "cpu": CPU_THRESHOLD,
+            "ram": RAM_THRESHOLD,
+            "interval": CHECK_INTERVAL,
+            "cpu_streak": CPU_HIGH_STREAK_REQUIRED,
+        },
         "docker_available": DOCKER_AVAILABLE,
         "containers": [{k: v for k, v in c.items() if k != "id"} for c in cached_containers],
         "suspended_count": len(suspended_containers),
@@ -691,6 +719,7 @@ async def metrics_loop():
     await asyncio.sleep(1)
     while True:
         has_viewers = bool(subscribers)
+        # Always sample host metrics so the 1-minute CPU average stays warm.
         sample_metrics()
         if has_viewers:
             if _stats_tick % max(1, CONTAINER_STATS_EVERY) == 0:
@@ -708,12 +737,13 @@ async def monitor_loop():
     cpu_high_streak = 0
     resource_saturated = False
     logger.info(
-        f"🚀 Monitor started — CPU>{CPU_THRESHOLD}% for {CPU_HIGH_STREAK_REQUIRED} intervals "
+        f"🚀 Monitor started — CPU 1m avg>{CPU_THRESHOLD}% for {CPU_HIGH_STREAK_REQUIRED} checks "
         f"| RAM>{RAM_THRESHOLD}% | every {CHECK_INTERVAL}s"
     )
     await asyncio.sleep(METRICS_INTERVAL)
     while monitor_running:
-        cpu = last_metrics["cpu"]
+        # Decisions use 1-minute rolling average, not a single spike.
+        cpu = last_metrics["cpu_avg_1m"]
         ram = last_metrics["ram"]
 
         if cpu > CPU_THRESHOLD:
@@ -728,11 +758,14 @@ async def monitor_loop():
 
         if cpu > CPU_THRESHOLD and not cpu_saturated:
             logger.info(
-                f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% "
-                f"⏳ CPU high {cpu_high_streak}/{CPU_HIGH_STREAK_REQUIRED} consecutive intervals"
+                f"📊 CPU_1m={cpu:.1f}% (now={last_metrics['cpu']:.1f}%) RAM={ram:.1f}% "
+                f"⏳ CPU high {cpu_high_streak}/{CPU_HIGH_STREAK_REQUIRED} consecutive checks"
             )
         elif overloaded:
-            logger.info(f"📊 CPU={cpu:.1f}% RAM={ram:.1f}% ⚠️ OVERLOADED")
+            logger.info(
+                f"📊 CPU_1m={cpu:.1f}% (now={last_metrics['cpu']:.1f}%) "
+                f"RAM={ram:.1f}% ⚠️ OVERLOADED"
+            )
 
         containers = await asyncio.to_thread(collect_container_info)
         detect_status_transitions(containers)
@@ -752,7 +785,7 @@ async def monitor_loop():
                 target = candidates[0]
                 logger.warning(
                     f"🔴 Overload detected — stopping '{target['name']}' "
-                    f"(priority={target['priority']}, CPU={cpu:.1f}%, RAM={ram:.1f}%)"
+                    f"(priority={target['priority']}, CPU_1m={cpu:.1f}%, RAM={ram:.1f}%)"
                 )
                 await asyncio.to_thread(stop_container, target["name"])
                 mutated = True
@@ -907,17 +940,28 @@ async def set_priority(update: PriorityUpdate):
 
 @app.post("/api/thresholds")
 async def update_thresholds(update: ThresholdUpdate):
-    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL
+    global CPU_THRESHOLD, RAM_THRESHOLD, CHECK_INTERVAL, CPU_HIGH_STREAK_REQUIRED
     if update.cpu is not None:
         CPU_THRESHOLD = update.cpu
     if update.ram is not None:
         RAM_THRESHOLD = update.ram
     if update.interval is not None:
         CHECK_INTERVAL = max(5, int(update.interval))
-    logger.info(f"⚙️  Thresholds updated: CPU={CPU_THRESHOLD}% RAM={RAM_THRESHOLD}% interval={CHECK_INTERVAL}s")
+    if update.cpu_streak is not None:
+        CPU_HIGH_STREAK_REQUIRED = max(1, min(30, int(update.cpu_streak)))
+    logger.info(
+        f"⚙️  Thresholds updated: CPU={CPU_THRESHOLD}% RAM={RAM_THRESHOLD}% "
+        f"interval={CHECK_INTERVAL}s streak={CPU_HIGH_STREAK_REQUIRED}"
+    )
     save_settings()
     publish_snapshot()
-    return {"ok": True, "cpu": CPU_THRESHOLD, "ram": RAM_THRESHOLD, "interval": CHECK_INTERVAL}
+    return {
+        "ok": True,
+        "cpu": CPU_THRESHOLD,
+        "ram": RAM_THRESHOLD,
+        "interval": CHECK_INTERVAL,
+        "cpu_streak": CPU_HIGH_STREAK_REQUIRED,
+    }
 
 
 @app.post("/api/container/{name}/start")
